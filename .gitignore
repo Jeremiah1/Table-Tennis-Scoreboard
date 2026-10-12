@@ -1,0 +1,9 @@
+.venv/
+adafruit-circuitpython-bundle-*/
+__pycache__/
+*.py[cod]
+settings.toml
+secrets.py
+.env
+.env.*
+!.env.example
