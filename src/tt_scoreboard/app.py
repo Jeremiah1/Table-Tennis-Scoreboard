@@ -1,10 +1,13 @@
 import board
+import espnow
 import keypad
 import supervisor  # pyright: ignore[reportMissingModuleSource]  (CircuitPython built-in; stubs only)
 import time
+import wifi
 from adafruit_matrixportal.matrix import Matrix
 from tt_scoreboard.gestures import DOUBLE_TAP, TAP, GestureDetector, ticks_diff
 from tt_scoreboard.name_selection import NameSelection, distinct_names
+from tt_scoreboard.remote_link import PRESSED, RELEASED, RemoteButtons
 from tt_scoreboard.scoring import TableTennisMatch
 from tt_scoreboard.screens import (
     HEIGHT,
@@ -40,23 +43,56 @@ READY_PAUSE_S = 1.0
 WINNER_GUARD_MS = 1500
 WINNER_TIMEOUT_MS = 10000
 LOOP_DELAY_S = 0.01
+# Receive the wireless arcade-button remotes (the onboard buttons always work).
+REMOTES_ENABLED = True
+# A held remote button is forgotten if its heartbeats stop for this long.
+REMOTE_TIMEOUT_MS = 500
+
+class RemoteReceiver:
+    """Receives the players' wireless button remotes over ESP-NOW."""
+
+    def __init__(self, timeout_ms):
+        wifi.radio.enabled = True
+        self._espnow = espnow.ESPNow()
+        self._buttons = RemoteButtons(timeout_ms)
+
+    def poll(self, now):
+        """Return (player, event) pairs, where event is PRESSED, RELEASED or LOST."""
+        events = []
+        packet = self._espnow.read()
+        while packet is not None:
+            events.extend(self._buttons.receive(packet.msg, now))
+            packet = self._espnow.read()
+        events.extend(self._buttons.check_timeouts(now))
+        return events
+
+    def deinit(self):
+        self._espnow.deinit()
 
 class ButtonInput:
     """Reports (player, gesture) pairs, where gesture is TAP, DOUBLE_TAP or HOLD.
+
+    Combines the onboard UP (player 1) and DOWN (player 2) buttons with the
+    optional wireless remotes. Each physical button is tracked separately.
 
     Double taps are only detected after clear(double_tap=True), since enabling
     them delays every single tap by double_tap_ms.
     """
 
-    def __init__(self, hold_ms, double_tap_ms):
+    # Gesture detector keys: onboard buttons are 0 and 1, remotes 2 and 3.
+    # Player number is key % 2 + 1 for both.
+    _REMOTE_KEY_OFFSET = 2
+
+    def __init__(self, hold_ms, double_tap_ms, remotes=None):
         self._keys = keypad.Keys(
             (board.BUTTON_UP, board.BUTTON_DOWN),
             value_when_pressed=False,
             pull=True,
             interval=0.03
         )
+        self._remotes = remotes
         self._double_tap_ms = double_tap_ms
-        self._gestures = GestureDetector(key_count=2, hold_ms=hold_ms)
+        self._gestures = GestureDetector(key_count=4, hold_ms=hold_ms)
         self._event = keypad.Event()
 
     def next_gesture(self):
@@ -66,21 +102,35 @@ class ButtonInput:
                 self._gestures.press(key, self._event.timestamp)
             else:
                 self._gestures.release(key, self._event.timestamp)
-        self._gestures.poll(supervisor.ticks_ms())
+        now = supervisor.ticks_ms()
+        if self._remotes is not None:
+            for player, event in self._remotes.poll(now):
+                key = self._REMOTE_KEY_OFFSET + player - 1
+                if event == PRESSED:
+                    self._gestures.press(key, now)
+                elif event == RELEASED:
+                    self._gestures.release(key, now)
+                else:
+                    self._gestures.cancel(key)
+        self._gestures.poll(now)
         detected = self._gestures.next_gesture()
         if detected is None:
             return None
         key, gesture = detected
-        return key + 1, gesture
+        return key % 2 + 1, gesture
 
     def clear(self, double_tap=False):
         """Discard pending input, including any press still in progress."""
         self._keys.events.clear()
+        if self._remotes is not None:
+            self._remotes.poll(supervisor.ticks_ms())
         self._gestures.reset()
         self._gestures.double_tap_ms = self._double_tap_ms if double_tap else 0
 
     def deinit(self):
         self._keys.deinit()
+        if self._remotes is not None:
+            self._remotes.deinit()
 
 def select_players(display, buttons):
     """Tap for the next name, double tap for the previous one, hold to lock in (or unlock)."""
@@ -139,7 +189,8 @@ def announce_winner(display, buttons, player_names, match):
 def main():
     validate_player_names(PLAYER_NAMES + (GUEST_NAME,) + distinct_names((GUEST_NAME, GUEST_NAME)))
     matrix = Matrix(width=WIDTH, height=HEIGHT, bit_depth=2)
-    buttons = ButtonInput(hold_ms=HOLD_MS, double_tap_ms=DOUBLE_TAP_MS)
+    remotes = RemoteReceiver(REMOTE_TIMEOUT_MS) if REMOTES_ENABLED else None
+    buttons = ButtonInput(hold_ms=HOLD_MS, double_tap_ms=DOUBLE_TAP_MS, remotes=remotes)
     try:
         while True:
             player_names = select_players(matrix.display, buttons)

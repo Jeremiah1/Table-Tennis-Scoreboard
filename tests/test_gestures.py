@@ -1,6 +1,6 @@
 import unittest
 
-from tt_scoreboard.gestures import DOUBLE_TAP, HOLD, TAP, GestureDetector, ticks_diff
+from tt_scoreboard.gestures import DOUBLE_TAP, HOLD, TAP, GestureDetector, ticks_add, ticks_diff
 
 HOLD_MS = 1000
 DOUBLE_TAP_MS = 300
@@ -16,6 +16,9 @@ class TicksDiffTest(unittest.TestCase):
 
     def test_negative(self):
         self.assertEqual(ticks_diff(100, 150), -50)
+
+    def test_add_wraps(self):
+        self.assertEqual(ticks_add((1 << 29) - 10, 30), 20)
 
 
 class DetectorTestCase(unittest.TestCase):
@@ -70,6 +73,13 @@ class GestureDetectorTest(DetectorTestCase):
     def test_reset_ignores_release_of_key_already_down(self):
         self.detector.press(0, 0)
         self.detector.reset()
+        self.detector.poll(HOLD_MS * 2)
+        self.detector.release(0, HOLD_MS * 2)
+        self.assertEqual(self.drain(), [])
+
+    def test_cancel_drops_press_without_gesture(self):
+        self.detector.press(0, 0)
+        self.detector.cancel(0)
         self.detector.poll(HOLD_MS * 2)
         self.detector.release(0, HOLD_MS * 2)
         self.assertEqual(self.drain(), [])

@@ -16,6 +16,11 @@ def ticks_diff(end, start):
     return diff
 
 
+def ticks_add(ticks, delta):
+    """Add milliseconds to a tick value, wrapping like the tick counter."""
+    return (ticks + delta) & _TICKS_MAX
+
+
 class GestureDetector:
     """Classifies raw press/release events into taps, double taps and holds.
 
@@ -74,6 +79,11 @@ class GestureDetector:
             self._gestures.append((key, DOUBLE_TAP))
         else:
             self._tap_released_at[key] = now
+
+    def cancel(self, key):
+        """Forget a press in progress without reporting a gesture for it."""
+        self._pressed_at[key] = None
+        self._held[key] = False
 
     def poll(self, now):
         """Report holds and taps whose double tap window has expired."""
