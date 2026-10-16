@@ -1,8 +1,11 @@
 class TableTennisMatch:
 
-    def __init__(self, first_server=1):
+    def __init__(self, first_server=1, games_to_win=4):
         self._validate_player(first_server)
+        if games_to_win < 1:
+            raise ValueError("Games to win must be at least 1")
         self._first_server = first_server
+        self._games_to_win = games_to_win
         self._points = [0, 0]
         self._games = [0, 0]
         self._previous_state = None
@@ -21,6 +24,13 @@ class TableTennisMatch:
         return tuple(self._games)
 
     @property
+    def winner(self):
+        for index, games in enumerate(self._games):
+            if games >= self._games_to_win:
+                return index + 1
+        return None
+
+    @property
     def deuce(self):
         return min(self._points) >= 10
 
@@ -32,6 +42,8 @@ class TableTennisMatch:
 
     def award_point(self, player):
         self._validate_player(player)
+        if self.winner is not None:
+            raise ValueError("Match is already over")
         self._previous_state = (
             self.points, self.games, self._first_server
         )
