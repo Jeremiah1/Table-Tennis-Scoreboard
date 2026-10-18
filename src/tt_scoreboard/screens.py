@@ -165,6 +165,44 @@ class NameSelectDisplay:
             status.text = "READY" if locked else "HOLD=LOCK"
             status.color = LOCKED_COLOR if locked else HINT_COLOR
 
+class ServeSelectDisplay:
+    """Asks who serves first, with serve bars around the chosen player's name.
+
+    Player 1 is on the left, as at the start of the match.
+    """
+
+    def __init__(self, display, player_names):
+        if len(player_names) != 2:
+            raise ValueError("Exactly two player names are required")
+        root = split_layout()
+        self._markers = []
+        self._serve_labels = []
+        self._hints = []
+        for index, name in enumerate(player_names):
+            center = section_center(index)
+            name_label, left_bar, right_bar = _name_header(name, index, index)
+            root.append(name_label)
+            markers = displayio.Group()
+            markers.append(rect(left_bar, 1, SERVE_BAR_WIDTH, 9, SERVE_COLOR))
+            markers.append(rect(right_bar, 1, SERVE_BAR_WIDTH, 9, SERVE_COLOR))
+            self._markers.append(markers)
+            root.append(markers)
+            serve_label = text("SERVE", SERVE_COLOR, center, 31, scale=2)
+            hint = text(" ", HINT_COLOR, center, 57)
+            self._serve_labels.append(serve_label)
+            self._hints.append(hint)
+            root.append(serve_label)
+            root.append(hint)
+        display.root_group = root
+
+    def render(self, server):
+        """server is the chosen player (1 or 2), or None before anyone is chosen."""
+        for index in range(2):
+            chosen = index + 1 == server
+            self._markers[index].hidden = not chosen
+            self._serve_labels[index].hidden = not chosen
+            self._hints[index].text = "TAP=SERVE" if server is None else "HOLD=START"
+
 class WinnerDisplay:
 
     def __init__(self, display, winner_name, winner_games, loser_games):

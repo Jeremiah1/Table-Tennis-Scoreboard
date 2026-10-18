@@ -65,9 +65,10 @@ Set `REMOTES_ENABLED = False` in `src/tt_scoreboard/app.py` to turn off the radi
 The onboard UP and DOWN buttons on the Matrix Portal always work too: UP is the left side and DOWN is the right side.
 
 1. **Name selection**: the left button picks player 1 (who starts at the left end) and the right button player 2. Tap for the next name, double-tap for the previous name, and hold for 1 second to lock in a name (hold again to unlock). A name locked by one player is skipped for the other, except `GUEST` (last in the list), which both players can pick; two guests appear as `GUEST 1` and `GUEST 2`. Edit `PLAYER_NAMES` in `src/tt_scoreboard/app.py` to change the list.
-2. **Match**: press the button at your end of the table to award yourself a point. The match is best of 7 (first to 4 games). Players change ends after every game, and in the deciding game when someone reaches 5 points; the display swaps names, scores and game counts at the same moment, so each half of the board always shows the player at that end.
+2. **Serve**: tap your button to serve first; the serve bars appear around your name. Either player can tap to change it. Once someone is chosen, hold either button for 1 second to start the match.
+3. **Match**: press the button at your end of the table to award yourself a point. The match is best of 7 (first to 4 games). Players change ends after every game, and in the deciding game when someone reaches 5 points; the display swaps names, scores and game counts at the same moment, so each half of the board always shows the player at that end.
    - **Undo**: double-tap either button to undo the last point. Repeat to step further back, even into the previous game (sides switch back too). Because a tap has to wait to see if a second tap follows, each point appears about 0.3 s after the press.
-3. **Winner**: the match winner is shown until either button is pressed (after a short guard period) or 10 seconds pass, then the board returns to name selection. If the winning point was a mistake, double-tap either button (any time before the board moves on) to undo it and return to the match.
+4. **Winner**: the match winner is shown until either button is held for 1 second or 30 seconds pass, then the board returns to name selection. Single taps do nothing, so a double tap that registers as one tap can't skip the screen. If the winning point was a mistake, double-tap either button (any time before the board moves on) to undo it and return to the match.
 
 ## Tests
 

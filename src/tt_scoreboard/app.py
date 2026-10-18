@@ -5,7 +5,7 @@ import supervisor  # pyright: ignore[reportMissingModuleSource]  (CircuitPython 
 import time
 import wifi
 from adafruit_matrixportal.matrix import Matrix
-from tt_scoreboard.gestures import DOUBLE_TAP, TAP, GestureDetector, ticks_diff
+from tt_scoreboard.gestures import DOUBLE_TAP, HOLD, TAP, GestureDetector, ticks_diff
 from tt_scoreboard.name_selection import NameSelection, distinct_names
 from tt_scoreboard.remote_link import PRESSED, RELEASED, RemoteButtons
 from tt_scoreboard.scoring import TableTennisMatch
@@ -14,6 +14,7 @@ from tt_scoreboard.screens import (
     WIDTH,
     NameSelectDisplay,
     ScoreboardDisplay,
+    ServeSelectDisplay,
     WinnerDisplay,
     validate_player_names,
 )
@@ -31,19 +32,13 @@ PLAYER_NAMES = (
 # Available to both players, for anyone not in PLAYER_NAMES. Listed last, so a
 # double tap from the start of the list reaches it.
 GUEST_NAME = "GUEST"
-# Player 1 is whoever starts at the left end of the table.
-FIRST_SERVER = 1
 GAMES_TO_WIN = 4  # Best of 7
 
 HOLD_MS = 1000
 # Single taps wait this long for a possible second tap, while double taps are enabled.
 DOUBLE_TAP_MS = 300
 READY_PAUSE_S = 1.0
-# Presses during the guard period are ignored so the winner screen is not
-# skipped by accident right after the final point. A double tap to undo that
-# point still works.
-WINNER_GUARD_MS = 1500
-WINNER_TIMEOUT_MS = 10000
+WINNER_TIMEOUT_MS = 30000
 LOOP_DELAY_S = 0.01
 # Receive the wireless arcade-button remotes (the onboard buttons always work).
 REMOTES_ENABLED = True
@@ -159,6 +154,28 @@ def select_players(display, buttons):
     time.sleep(READY_PAUSE_S)
     return distinct_names(selection.selected_names)
 
+def select_server(display, buttons, player_names):
+    """Tap your button to serve first, then hold either button to start.
+
+    Returns the player who serves first.
+    """
+    screen = ServeSelectDisplay(display, player_names)
+    server = None
+    screen.render(server)
+    buttons.clear()
+    while True:
+        event = buttons.next_gesture()
+        if event is not None:
+            side, gesture = event
+            if gesture == HOLD:
+                if server is not None:
+                    return server
+            else:
+                # Player 1 starts on the left, so the side is the player.
+                server = side
+                screen.render(server)
+        time.sleep(LOOP_DELAY_S)
+
 def play_match(display, buttons, player_names, match):
     """Play until the match has a winner.
 
@@ -181,9 +198,11 @@ def play_match(display, buttons, player_names, match):
         time.sleep(LOOP_DELAY_S)
 
 def announce_winner(display, buttons, player_names, match):
-    """Show the winner until a button is pressed or the timeout expires.
+    """Show the winner until a button is held or the timeout expires.
 
-    Returns True if a double tap undid the winning point, so play resumes.
+    Taps are ignored, so a double tap that comes out as a single tap does not
+    skip the screen. Returns True if a double tap undid the winning point, so
+    play resumes.
     Input is not cleared on entry, so a double tap that began on the
     scoreboard still counts.
     """
@@ -205,7 +224,7 @@ def announce_winner(display, buttons, player_names, match):
             if gesture == DOUBLE_TAP:
                 match.undo_last_point()
                 return True
-            if elapsed >= WINNER_GUARD_MS:
+            if gesture == HOLD:
                 return False
         time.sleep(LOOP_DELAY_S)
 
@@ -217,7 +236,8 @@ def main():
     try:
         while True:
             player_names = select_players(matrix.display, buttons)
-            match = TableTennisMatch(first_server=FIRST_SERVER, games_to_win=GAMES_TO_WIN)
+            first_server = select_server(matrix.display, buttons, player_names)
+            match = TableTennisMatch(first_server=first_server, games_to_win=GAMES_TO_WIN)
             while True:
                 play_match(matrix.display, buttons, player_names, match)
                 if not announce_winner(matrix.display, buttons, player_names, match):
