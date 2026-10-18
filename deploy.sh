@@ -2,11 +2,12 @@
 # Deploy to a mounted CircuitPython board.
 #
 # Usage: ./deploy.sh scoreboard [--libs] [--dry-run] [MOUNT_POINT]
-#        ./deploy.sh remote --player 1|2 [--dry-run] [MOUNT_POINT]
+#        ./deploy.sh remote --side left|right [--dry-run] [MOUNT_POINT]
 #
 #   scoreboard  The Matrix Portal S3 driving the LED matrix.
 #   remote      A QT Py ESP32-S3 wireless arcade-button remote.
-#   --player N  Which player the remote belongs to (saved in its settings.toml).
+#   --side SIDE Which end of the table the remote is mounted at, left or right
+#               (saved in its settings.toml).
 #   --libs      Also copy the libraries listed in requirements-circuitpython.txt
 #               from the local adafruit-circuitpython-bundle-*/lib into CIRCUITPY/lib.
 #   --dry-run   Show what would change without writing to the board.
@@ -20,11 +21,11 @@ PACKAGE="tt_scoreboard"
 # Loose modules on the scoreboard from before the code moved into the package.
 LEGACY_FILES=(scoring.py screens.py gestures.py name_selection.py)
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
 fail() { echo "$*" >&2; exit 1; }
 
 target=""
-player=""
+side=""
 copy_libs=false
 dry_run=false
 mount_point="${CIRCUITPY:-}"
@@ -32,8 +33,8 @@ mount_point="${CIRCUITPY:-}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         scoreboard|remote) target="$1" ;;
-        --player) player="${2:-}"; shift ;;
-        --player=*) player="${1#*=}" ;;
+        --side) side="${2:-}"; shift ;;
+        --side=*) side="${1#*=}" ;;
         --libs) copy_libs=true ;;
         --dry-run) dry_run=true ;;
         -h|--help) usage; exit 0 ;;
@@ -46,11 +47,11 @@ done
 case "$target" in
     scoreboard)
         board_pattern="adafruit_matrixportal_s3"
-        [[ -z "$player" ]] || fail "--player only applies to remotes"
+        [[ -z "$side" ]] || fail "--side only applies to remotes"
         ;;
     remote)
         board_pattern="adafruit_qtpy_esp32s3*"
-        [[ "$player" == 1 || "$player" == 2 ]] || fail "Remotes need --player 1 or --player 2"
+        [[ "$side" == left || "$side" == right ]] || fail "Remotes need --side left or --side right"
         $copy_libs && fail "Remotes use only built-in modules; --libs is not needed"
         ;;
     *)
@@ -94,18 +95,23 @@ run() {
 echo "Deploying $target to $mount_point ($(board_id "$mount_point"))"
 
 if [[ "$target" == remote ]]; then
-    # Written before the code so the remote never starts without a player number.
+    # Written before the code so the remote never starts without a side.
     settings="$mount_point/settings.toml"
-    if [[ -f "$settings" ]] && grep -q '^[[:space:]]*TT_PLAYER[[:space:]]*=' "$settings"; then
-        run sed -i "s/^[[:space:]]*TT_PLAYER[[:space:]]*=.*/TT_PLAYER = $player/" "$settings"
+    if [[ -f "$settings" ]] && grep -q '^[[:space:]]*TT_SIDE[[:space:]]*=' "$settings"; then
+        run sed -i "s/^[[:space:]]*TT_SIDE[[:space:]]*=.*/TT_SIDE = \"$side\"/" "$settings"
     elif $dry_run; then
-        echo "[dry-run] append TT_PLAYER = $player to $settings"
+        echo "[dry-run] append TT_SIDE = \"$side\" to $settings"
     else
         # Make sure an existing last line is terminated before appending.
         [[ -s "$settings" && -n "$(tail -c 1 "$settings")" ]] && echo >> "$settings"
-        echo "TT_PLAYER = $player" >> "$settings"
+        echo "TT_SIDE = \"$side\"" >> "$settings"
     fi
-    echo "Player set to $player"
+    # Remotes used to belong to a player rather than a side.
+    if [[ -f "$settings" ]] && grep -q '^[[:space:]]*TT_PLAYER[[:space:]]*=' "$settings"; then
+        echo "Removing legacy TT_PLAYER setting"
+        run sed -i '/^[[:space:]]*TT_PLAYER[[:space:]]*=/d' "$settings"
+    fi
+    echo "Side set to $side"
 fi
 
 # Copy the package before code.py: CircuitPython reloads on each write, and the

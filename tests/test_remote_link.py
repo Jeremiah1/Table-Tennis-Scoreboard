@@ -26,7 +26,7 @@ class ProtocolTest(unittest.TestCase):
         message[0] ^= 0xFF
         self.assertIsNone(decode(bytes(message)))
 
-    def test_rejects_invalid_player(self):
+    def test_rejects_invalid_side(self):
         self.assertIsNone(decode(encode(3, 1, 1, False)))
 
 
@@ -34,7 +34,7 @@ class ButtonStateSenderTest(unittest.TestCase):
 
     def setUp(self):
         self.sender = ButtonStateSender(
-            player=1, session=5, repeat_count=3, repeat_ms=20, heartbeat_ms=100
+            side=1, session=5, repeat_count=3, repeat_ms=20, heartbeat_ms=100
         )
 
     def messages(self, start, end, step=1):
@@ -136,7 +136,7 @@ class RemoteButtonTrackerTest(unittest.TestCase):
 
 class RemoteButtonsTest(unittest.TestCase):
 
-    def test_routes_messages_by_player(self):
+    def test_routes_messages_by_side(self):
         buttons = RemoteButtons(TIMEOUT_MS)
         self.assertEqual(buttons.receive(encode(2, 9, 1, True), 0), [(2, PRESSED)])
         self.assertEqual(buttons.receive(encode(1, 9, 1, True), 0), [(1, PRESSED)])
@@ -146,7 +146,7 @@ class RemoteButtonsTest(unittest.TestCase):
         self.assertEqual(RemoteButtons(TIMEOUT_MS).receive(b"other", 0), [])
 
     def test_sender_to_tracker_end_to_end(self):
-        sender = ButtonStateSender(player=2, session=3)
+        sender = ButtonStateSender(side=2, session=3)
         buttons = RemoteButtons(TIMEOUT_MS)
         events = []
         for now in range(0, 400):

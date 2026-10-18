@@ -31,6 +31,7 @@ PLAYER_NAMES = (
 # Available to both players, for anyone not in PLAYER_NAMES. Listed last, so a
 # double tap from the start of the list reaches it.
 GUEST_NAME = "GUEST"
+# Player 1 is whoever starts at the left end of the table.
 FIRST_SERVER = 1
 GAMES_TO_WIN = 4  # Best of 7
 
@@ -39,7 +40,8 @@ HOLD_MS = 1000
 DOUBLE_TAP_MS = 300
 READY_PAUSE_S = 1.0
 # Presses during the guard period are ignored so the winner screen is not
-# skipped by accident right after the final point.
+# skipped by accident right after the final point. A double tap to undo that
+# point still works.
 WINNER_GUARD_MS = 1500
 WINNER_TIMEOUT_MS = 10000
 LOOP_DELAY_S = 0.01
@@ -49,7 +51,7 @@ REMOTES_ENABLED = True
 REMOTE_TIMEOUT_MS = 500
 
 class RemoteReceiver:
-    """Receives the players' wireless button remotes over ESP-NOW."""
+    """Receives the wireless button remotes at each end of the table over ESP-NOW."""
 
     def __init__(self, timeout_ms):
         wifi.radio.enabled = True
@@ -57,7 +59,7 @@ class RemoteReceiver:
         self._buttons = RemoteButtons(timeout_ms)
 
     def poll(self, now):
-        """Return (player, event) pairs, where event is PRESSED, RELEASED or LOST."""
+        """Return (side, event) pairs, where event is PRESSED, RELEASED or LOST."""
         events = []
         packet = self._espnow.read()
         while packet is not None:
@@ -70,17 +72,18 @@ class RemoteReceiver:
         self._espnow.deinit()
 
 class ButtonInput:
-    """Reports (player, gesture) pairs, where gesture is TAP, DOUBLE_TAP or HOLD.
+    """Reports (side, gesture) pairs, where side is LEFT or RIGHT and gesture
+    is TAP, DOUBLE_TAP or HOLD.
 
-    Combines the onboard UP (player 1) and DOWN (player 2) buttons with the
-    optional wireless remotes. Each physical button is tracked separately.
+    Combines the onboard UP (left) and DOWN (right) buttons with the optional
+    wireless remotes. Each physical button is tracked separately.
 
     Double taps are only detected after clear(double_tap=True), since enabling
     them delays every single tap by double_tap_ms.
     """
 
     # Gesture detector keys: onboard buttons are 0 and 1, remotes 2 and 3.
-    # Player number is key % 2 + 1 for both.
+    # The side is key % 2 + 1 for both.
     _REMOTE_KEY_OFFSET = 2
 
     def __init__(self, hold_ms, double_tap_ms, remotes=None):
@@ -104,8 +107,8 @@ class ButtonInput:
                 self._gestures.release(key, self._event.timestamp)
         now = supervisor.ticks_ms()
         if self._remotes is not None:
-            for player, event in self._remotes.poll(now):
-                key = self._REMOTE_KEY_OFFSET + player - 1
+            for side, event in self._remotes.poll(now):
+                key = self._REMOTE_KEY_OFFSET + side - 1
                 if event == PRESSED:
                     self._gestures.press(key, now)
                 elif event == RELEASED:
@@ -133,7 +136,10 @@ class ButtonInput:
             self._remotes.deinit()
 
 def select_players(display, buttons):
-    """Tap for the next name, double tap for the previous one, hold to lock in (or unlock)."""
+    """Tap for the next name, double tap for the previous one, hold to lock in (or unlock).
+
+    The left button picks player 1, who starts at the left end.
+    """
     selection = NameSelection(PLAYER_NAMES + (GUEST_NAME,), shared_names=(GUEST_NAME,))
     screen = NameSelectDisplay(display)
     screen.render(selection)
@@ -153,23 +159,34 @@ def select_players(display, buttons):
     time.sleep(READY_PAUSE_S)
     return distinct_names(selection.selected_names)
 
-def play_match(display, buttons, player_names):
-    """Any press awards that player a point. Returns the finished match."""
-    match = TableTennisMatch(first_server=FIRST_SERVER, games_to_win=GAMES_TO_WIN)
+def play_match(display, buttons, player_names, match):
+    """Play until the match has a winner.
+
+    A press awards a point to the player at that end of the table, and a
+    double tap on either button undoes the last point.
+    """
     scoreboard = ScoreboardDisplay(display, player_names)
     scoreboard.render(match)
-    buttons.clear()
+    buttons.clear(double_tap=True)
     while match.winner is None:
         event = buttons.next_gesture()
         if event is not None:
-            player, _ = event
-            match.award_point(player)
+            side, gesture = event
+            if gesture == DOUBLE_TAP:
+                if match.can_undo:
+                    match.undo_last_point()
+            else:
+                match.award_point(match.player_on_side(side))
             scoreboard.render(match)
         time.sleep(LOOP_DELAY_S)
-    return match
 
 def announce_winner(display, buttons, player_names, match):
-    """Show the winner until a button is pressed or the timeout expires."""
+    """Show the winner until a button is pressed or the timeout expires.
+
+    Returns True if a double tap undid the winning point, so play resumes.
+    Input is not cleared on entry, so a double tap that began on the
+    scoreboard still counts.
+    """
     winner = match.winner
     WinnerDisplay(
         display,
@@ -181,9 +198,15 @@ def announce_winner(display, buttons, player_names, match):
     while True:
         elapsed = ticks_diff(supervisor.ticks_ms(), shown_at)
         if elapsed >= WINNER_TIMEOUT_MS:
-            return
-        if buttons.next_gesture() is not None and elapsed >= WINNER_GUARD_MS:
-            return
+            return False
+        event = buttons.next_gesture()
+        if event is not None:
+            _, gesture = event
+            if gesture == DOUBLE_TAP:
+                match.undo_last_point()
+                return True
+            if elapsed >= WINNER_GUARD_MS:
+                return False
         time.sleep(LOOP_DELAY_S)
 
 def main():
@@ -194,7 +217,10 @@ def main():
     try:
         while True:
             player_names = select_players(matrix.display, buttons)
-            match = play_match(matrix.display, buttons, player_names)
-            announce_winner(matrix.display, buttons, player_names, match)
+            match = TableTennisMatch(first_server=FIRST_SERVER, games_to_win=GAMES_TO_WIN)
+            while True:
+                play_match(matrix.display, buttons, player_names, match)
+                if not announce_winner(matrix.display, buttons, player_names, match):
+                    break
     finally:
         buttons.deinit()

@@ -1,8 +1,9 @@
 """Firmware for a wireless arcade-button remote (QT Py ESP32-S3).
 
 The arcade button's switch is wired between BUTTON_PIN and GND on the
-Terminal Block BFF. Which player the remote belongs to comes from TT_PLAYER
-in the board's settings.toml, written by deploy.sh.
+Terminal Block BFF. The remote is mounted at one end of the table, and which
+end comes from TT_SIDE ("left" or "right") in the board's settings.toml,
+written by deploy.sh. A press scores for whichever player is at that end.
 """
 import alarm
 import board
@@ -25,17 +26,19 @@ LOOP_DELAY_S = 0.002
 
 BROADCAST_MAC = b"\xff\xff\xff\xff\xff\xff"
 # NeoPixel colors (GRB byte order).
-PLAYER_COLOR = (0, 0, 40)
+SIDE_COLOR = (0, 0, 40)
 ERROR_COLOR = (0, 40, 0)
 
-def configured_player():
-    # os.getenv returns settings.toml values as strings.
-    player = str(os.getenv("TT_PLAYER", "")).strip()
-    if player not in ("1", "2"):
+SIDES = ("left", "right")
+
+def configured_side():
+    """Return 1 for the left end of the table, 2 for the right."""
+    side = str(os.getenv("TT_SIDE", "")).strip().lower()
+    if side not in SIDES:
         raise ValueError(
-            "Set TT_PLAYER = 1 or 2 in settings.toml (deploy.sh remote --player N)"
+            'Set TT_SIDE = "left" or "right" in settings.toml (deploy.sh remote --side SIDE)'
         )
-    return int(player)
+    return SIDES.index(side) + 1
 
 def blink(color, count, on_s=0.15, off_s=0.15):
     """Blink the onboard NeoPixel, then switch its power off to save battery."""
@@ -55,13 +58,13 @@ def deep_sleep_until_pressed():
     wake = alarm.pin.PinAlarm(pin=BUTTON_PIN, value=False, pull=True)
     alarm.exit_and_deep_sleep_until_alarms(wake)
 
-def run(player):
+def run(side):
     wifi.radio.enabled = True
     radio = espnow.ESPNow()
     peer = espnow.Peer(mac=BROADCAST_MAC)
     radio.peers.append(peer)
     # A random session lets the scoreboard tell a restarted remote from a stale one.
-    sender = ButtonStateSender(player, session=int.from_bytes(os.urandom(2), "big"))
+    sender = ButtonStateSender(side, session=int.from_bytes(os.urandom(2), "big"))
     keys = keypad.Keys((BUTTON_PIN,), value_when_pressed=False, pull=True, interval=0.02)
     event = keypad.Event()
     last_activity = supervisor.ticks_ms()
@@ -87,10 +90,10 @@ def run(player):
 
 def main():
     try:
-        player = configured_player()
+        side = configured_side()
     except ValueError:
         blink(ERROR_COLOR, 10)
         raise
-    blink(PLAYER_COLOR, player)
-    run(player)
+    blink(SIDE_COLOR, side)
+    run(side)
     deep_sleep_until_pressed()

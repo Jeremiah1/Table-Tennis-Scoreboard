@@ -1,6 +1,6 @@
 # Table Tennis Scoreboard
 
-A 128x64 RGB LED matrix scoreboard with a wireless arcade-button remote for each player.
+A 128x64 RGB LED matrix scoreboard with a wireless arcade-button remote mounted at each end of the table.
 
 | Part | Hardware |
 | --- | --- |
@@ -26,11 +26,11 @@ Plug in one board at a time (or pass the mount point), then run:
 
     ./deploy.sh scoreboard              # Matrix Portal: copy the app
     ./deploy.sh scoreboard --libs       # ...and the libraries from the local bundle
-    ./deploy.sh remote --player 1       # QT Py remote for player 1
-    ./deploy.sh remote --player 2       # QT Py remote for player 2
-    ./deploy.sh remote --player 1 --dry-run   # preview without writing
+    ./deploy.sh remote --side left      # QT Py remote for the left end of the table
+    ./deploy.sh remote --side right     # QT Py remote for the right end
+    ./deploy.sh remote --side left --dry-run  # preview without writing
 
-The script finds the drive by reading `Board ID` in each mounted drive's `boot_out.txt`, so it refuses to put remote code on the Matrix Portal or vice versa. It mirrors `src/tt_scoreboard/` onto the board and copies that board's `code.py`. For remotes it also writes `TT_PLAYER = N` to the board's `settings.toml`, keeping any other settings. Override the drive with a final argument or `$CIRCUITPY`.
+The script finds the drive by reading `Board ID` in each mounted drive's `boot_out.txt`, so it refuses to put remote code on the Matrix Portal or vice versa. It mirrors `src/tt_scoreboard/` onto the board and copies that board's `code.py`. For remotes it also writes `TT_SIDE = "left"` (or `"right"`) to the board's `settings.toml`, keeping any other settings (and removing the old `TT_PLAYER` setting). Override the drive with a final argument or `$CIRCUITPY`.
 
 A new QT Py first needs CircuitPython installed: use the installer on circuitpython.org for the QT Py ESP32-S3 (pick the variant matching your board: no PSRAM, or 4MB flash/2MB PSRAM). Then plug it in so CIRCUITPY appears, and run the deploy command.
 
@@ -49,8 +49,9 @@ The QT Py ESP32-S3 has no battery charger, so the LiPo needs a charger/connector
 
 ### Behavior
 
-- On power-up or wake, the QT Py's NeoPixel blinks **blue once for player 1, twice for player 2**. Ten fast **red** blinks mean `TT_PLAYER` is missing; redeploy with `--player`.
-- Each press is broadcast over **ESP-NOW** (no Wi-Fi network needed) and behaves exactly like that player's onboard button: tap, double-tap and hold all work.
+- A remote belongs to an end of the table, not to a player, so it can stay mounted while players change ends. A press scores for whoever is at that end.
+- On power-up or wake, the QT Py's NeoPixel blinks **blue once for the left side, twice for the right**. Ten fast **red** blinks mean `TT_SIDE` is missing; redeploy with `--side`.
+- Each press is broadcast over **ESP-NOW** (no Wi-Fi network needed) and behaves exactly like that side's onboard button: tap, double-tap and hold all work.
 - After 10 minutes without a press the remote goes into deep sleep. **The next press only wakes it** (watch for the blue blink); it is not sent to the scoreboard. While plugged into USB, CircuitPython only simulates deep sleep.
 
 ### Radio notes
@@ -61,11 +62,12 @@ Set `REMOTES_ENABLED = False` in `src/tt_scoreboard/app.py` to turn off the radi
 
 ## Usage
 
-The onboard UP and DOWN buttons on the Matrix Portal always work too: UP is player 1 and DOWN is player 2.
+The onboard UP and DOWN buttons on the Matrix Portal always work too: UP is the left side and DOWN is the right side.
 
-1. **Name selection**: tap for the next name, double-tap for the previous name, and hold for 1 second to lock in a name (hold again to unlock). A name locked by one player is skipped for the other, except `GUEST` (last in the list), which both players can pick; two guests appear as `GUEST 1` and `GUEST 2`. Edit `PLAYER_NAMES` in `src/tt_scoreboard/app.py` to change the list.
-2. **Match**: press a player's button to award them a point. The match is best of 7 (first to 4 games).
-3. **Winner**: the match winner is shown until either button is pressed (after a short guard period) or 10 seconds pass, then the board returns to name selection.
+1. **Name selection**: the left button picks player 1 (who starts at the left end) and the right button player 2. Tap for the next name, double-tap for the previous name, and hold for 1 second to lock in a name (hold again to unlock). A name locked by one player is skipped for the other, except `GUEST` (last in the list), which both players can pick; two guests appear as `GUEST 1` and `GUEST 2`. Edit `PLAYER_NAMES` in `src/tt_scoreboard/app.py` to change the list.
+2. **Match**: press the button at your end of the table to award yourself a point. The match is best of 7 (first to 4 games). Players change ends after every game, and in the deciding game when someone reaches 5 points; the display swaps names, scores and game counts at the same moment, so each half of the board always shows the player at that end.
+   - **Undo**: double-tap either button to undo the last point. Repeat to step further back, even into the previous game (sides switch back too). Because a tap has to wait to see if a second tap follows, each point appears about 0.3 s after the press.
+3. **Winner**: the match winner is shown until either button is pressed (after a short guard period) or 10 seconds pass, then the board returns to name selection. If the winning point was a mistake, double-tap either button (any time before the board moves on) to undo it and return to the match.
 
 ## Tests
 

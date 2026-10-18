@@ -58,17 +58,21 @@ def split_layout():
     root.append(rect(0,51,WIDTH,1,LINE_COLOR))
     return root
 
-def _name_header(name, index):
-    """Build the scoreboard name label and the x positions of its serve bars."""
+def _name_header(name, side, player):
+    """Build the scoreboard name label and the x positions of its serve bars.
+
+    side and player are 0-based indexes: side picks the half of the board, and
+    player the name's color.
+    """
     if not isinstance(name, str) or not name.strip() or "\n" in name or "\r" in name:
-        raise ValueError("Player {} name must be nonempty single-line text".format(index + 1))
-    name_label = text(name, player_color(index), section_center(index), 5)
+        raise ValueError("Player {} name must be nonempty single-line text".format(player + 1))
+    name_label = text(name, player_color(player), section_center(side), 5)
     bounds = name_label.bounding_box
     name_width = bounds[2]
     name_left = name_label.x + bounds[0]
     left_bar = name_left - SERVE_BAR_GAP - SERVE_BAR_WIDTH
     right_bar = name_left + name_width + SERVE_BAR_GAP
-    section_left = index * HALF
+    section_left = side * HALF
     if(
         left_bar < section_left + NAME_MARGIN
         or right_bar + SERVE_BAR_WIDTH > section_left + HALF - NAME_MARGIN
@@ -79,9 +83,10 @@ def _name_header(name, index):
 def validate_player_names(names):
     """Raise ValueError if any name cannot be shown on the scoreboard."""
     for name in names:
-        _name_header(name, 0)
+        _name_header(name, 0, 0)
 
 class ScoreboardDisplay:
+    """Shows each player on the half of the board matching their end of the table."""
 
     def __init__(self, display, player_names):
         if len(player_names) != 2:
@@ -91,18 +96,24 @@ class ScoreboardDisplay:
 
         self._scores = []
         self._games = []
-        self._serve_markers = []
-        for index, name in enumerate(player_names):
-            center = section_center(index)
-            name_label, left_bar, right_bar = _name_header(name, index)
-
-            root.append(name_label)
-            markers = displayio.Group()
-            markers.append(rect(left_bar, 1, SERVE_BAR_WIDTH, 9, SERVE_COLOR))
-            markers.append(rect(right_bar, 1, SERVE_BAR_WIDTH, 9, SERVE_COLOR))
-            markers.hidden = True
-            self._serve_markers.append(markers)
-            root.append(markers)
+        # Per side, a (header, serve markers) pair for each player, since either
+        # player may stand on either side. Only the current one is shown.
+        self._headers = []
+        for side in range(2):
+            center = section_center(side)
+            headers = []
+            for player, name in enumerate(player_names):
+                name_label, left_bar, right_bar = _name_header(name, side, player)
+                header = displayio.Group()
+                header.append(name_label)
+                markers = displayio.Group()
+                markers.append(rect(left_bar, 1, SERVE_BAR_WIDTH, 9, SERVE_COLOR))
+                markers.append(rect(right_bar, 1, SERVE_BAR_WIDTH, 9, SERVE_COLOR))
+                header.append(markers)
+                header.hidden = True
+                headers.append((header, markers))
+                root.append(header)
+            self._headers.append(headers)
 
             score = text("0", SCORE_COLOR, center, 31, scale=3)
             games = text("GAMES 0", GAME_COLOR, center, 57)
@@ -114,14 +125,15 @@ class ScoreboardDisplay:
         display.root_group = root
 
     def render(self, match):
-        for index, points in enumerate(match.points):
-            score_text = str(points)
-            self._scores[index].scale = max(1, min(3, 9 // len(score_text)))
-            self._scores[index].text = score_text
-            self._games[index].text = "GAMES {}".format(match.games[index])
-
-        for index, markers in enumerate(self._serve_markers):
-            markers.hidden = index + 1 != match.server
+        for side in range(2):
+            player = match.player_on_side(side + 1)
+            for index, (header, markers) in enumerate(self._headers[side]):
+                header.hidden = index + 1 != player
+                markers.hidden = player != match.server
+            score_text = str(match.points[player - 1])
+            self._scores[side].scale = max(1, min(3, 9 // len(score_text)))
+            self._scores[side].text = score_text
+            self._games[side].text = "GAMES {}".format(match.games[player - 1])
 
 class NameSelectDisplay:
 
