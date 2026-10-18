@@ -4,21 +4,35 @@ class NameSelection:
     A name locked by one player is skipped while the other player browses,
     unless it is one of shared_names (such as a guest name), which both
     players may lock in.
+
+    menu_names are entries that open something instead of naming a player
+    (such as STATS). Both players may browse to them, but they cannot be
+    locked in.
+
+    start_names, if given, are the names the two cursors start on (such as
+    the last match's players); otherwise they start on the first two names.
     """
 
-    def __init__(self, names, shared_names=()):
+    def __init__(self, names, shared_names=(), menu_names=(), start_names=None):
         names = tuple(names)
         if len(names) < 2:
             raise ValueError("At least two names are required")
         if len(set(names)) != len(names):
             raise ValueError("Names must be unique")
-        for name in shared_names:
+        for name in shared_names + menu_names:
             if name not in names:
-                raise ValueError("Shared name {} is not in the names list".format(name))
+                raise ValueError("Name {} is not in the names list".format(name))
+        if len(names) - len(menu_names) < 2:
+            raise ValueError("At least two player names are required")
         self._names = names
-        self._shared = tuple(names.index(name) for name in shared_names)
+        self._menu = tuple(names.index(name) for name in menu_names)
+        self._shared = tuple(names.index(name) for name in shared_names) + self._menu
         self._cursors = [0, 1]
         self._locked = [False, False]
+        if start_names is not None:
+            cursors = [names.index(name) if name in names else -1 for name in start_names]
+            if -1 not in cursors and (cursors[0] != cursors[1] or cursors[0] in self._shared):
+                self._cursors = cursors
 
     @staticmethod
     def _validate_player(player):
@@ -28,6 +42,11 @@ class NameSelection:
     def current(self, player):
         self._validate_player(player)
         return self._names[self._cursors[player - 1]]
+
+    def on_menu(self, player):
+        """Whether the player's cursor is on a menu entry."""
+        self._validate_player(player)
+        return self._cursors[player - 1] in self._menu
 
     def is_locked(self, player):
         self._validate_player(player)
@@ -59,10 +78,10 @@ class NameSelection:
     def toggle_lock(self, player):
         """Lock in the player's current name, or unlock it.
 
-        Has no effect once both players have locked in.
+        Has no effect once both players have locked in, or on a menu entry.
         """
         self._validate_player(player)
-        if self.complete:
+        if self.complete or self.on_menu(player):
             return
         index = player - 1
         other = 1 - index

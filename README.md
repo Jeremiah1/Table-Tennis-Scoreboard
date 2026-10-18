@@ -64,14 +64,30 @@ Set `REMOTES_ENABLED = False` in `src/tt_scoreboard/app.py` to turn off the radi
 
 The onboard UP and DOWN buttons on the Matrix Portal always work too: UP is the left side and DOWN is the right side.
 
-1. **Name selection**: the left button picks player 1 (who starts at the left end) and the right button player 2. Tap for the next name, double-tap for the previous name, and hold for 1 second to lock in a name (hold again to unlock). A name locked by one player is skipped for the other, except `GUEST` (last in the list), which both players can pick; two guests appear as `GUEST 1` and `GUEST 2`. Edit `PLAYER_NAMES` in `src/tt_scoreboard/app.py` to change the list.
+1. **Name selection**: the left button picks player 1 (who starts at the left end) and the right button player 2. Tap for the next name, double-tap for the previous name, and hold for 1 second to lock in a name (hold again to unlock). Names are listed most recently played first, and after a match both cursors start on the players who just played, each at the end they finished at. Resting on a name for a second replaces `HOLD=LOCK` with that player's rank, record and win rate (shortened to fit). A name locked by one player is skipped for the other, except `GUEST`, which both players can pick; two guests appear as `GUEST 1` and `GUEST 2`. The last entry, `STATS` (in purple), is a menu item: hold on it to browse the stats. Edit `PLAYER_NAMES` in `src/tt_scoreboard/app.py` to change the list.
 2. **Serve**: tap your button to serve first; the serve bars appear around your name. Either player can tap to change it. Once someone is chosen, hold either button for 1 second to start the match.
 3. **Match**: press the button at your end of the table to award yourself a point. The match is best of 7 (first to 4 games). Players change ends after every game, and in the deciding game when someone reaches 5 points; the display swaps names, scores and game counts at the same moment, so each half of the board always shows the player at that end.
    - **Undo**: double-tap either button to undo the last point. Repeat to step further back, even into the previous game (sides switch back too). Because a tap has to wait to see if a second tap follows, each point appears about 0.3 s after the press.
-4. **Winner**: the match winner is shown until either button is held for 1 second or 30 seconds pass, then the board returns to name selection. Single taps do nothing, so a double tap that registers as one tap can't skip the screen. If the winning point was a mistake, double-tap either button (any time before the board moves on) to undo it and return to the match.
+4. **Winner**: the match winner is shown until either button is held for 1 second or 30 seconds pass, then the board returns to name selection. Single taps do nothing, so a double tap that registers as one tap can't skip the screen. If the winning point was a mistake, double-tap either button (any time before the board moves on) to undo it and return to the match. Then the winner's and the loser's updated stats cards show for 5 seconds each (any press skips).
+
+## Stats
+
+Every match is recorded when its winner screen is confirmed, so an undone winning point never counts. Guests are not tracked; a named player's match against a guest still counts for them.
+
+- **Leaderboard**: 4 players per page with their match record and match win rate. Players are ranked by `(wins + 2) / (matches + 4)`, as if everyone started with 2 extra wins and 2 extra losses, so one lucky win can't hold first place; ties go to the better game win rate. Players with no matches, and inactive players who haven't played in the last 30 matches, are hidden; their stats are kept, and they return as soon as they play again.
+- **Player card**: match and game records with win rates, leaderboard rank and matches played.
+
+Getting there:
+
+- Hold on `STATS` in the name list to browse: tap for the next page, double-tap for the previous one, hold to go back (it also goes back after a minute untouched).
+- After a minute untouched, the name screen cycles through the leaderboard and every card by itself. The first press goes back to the name screen, keeping any names already picked.
+
+Reset: hold both buttons for 5 seconds on any stats screen (two people, or the board's UP and DOWN buttons), then hold both again for 3 seconds to confirm. Any other press cancels.
+
+Stats are kept in the board's non-volatile memory, not on the CIRCUITPY drive, so deploying never touches them. They're stored by name: a player removed from `PLAYER_NAMES` is hidden, and their stats return if the name is added back.
 
 ## Tests
 
-The logic in `src/tt_scoreboard/` that doesn't touch hardware (`scoring.py`, `name_selection.py`, `gestures.py`, `remote_link.py`) can be tested on desktop Python:
+The logic in `src/tt_scoreboard/` that doesn't touch hardware (`scoring.py`, `name_selection.py`, `gestures.py`, `remote_link.py`, `stats.py`) can be tested on desktop Python:
 
     python3 -m unittest discover -s tests -t .

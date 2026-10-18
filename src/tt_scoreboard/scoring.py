@@ -54,10 +54,17 @@ class TableTennisMatch:
         """The player at the left end of the table. Player 1 starts there.
 
         Players change ends after every game, and once more in the deciding
-        game when one of them reaches DECIDING_GAME_SWITCH_POINTS.
+        game when one of them reaches DECIDING_GAME_SWITCH_POINTS. Once the
+        match is over, this is where they stood for the final game.
         """
         switches = sum(self._games)
-        if self.deciding_game and max(self._points) >= DECIDING_GAME_SWITCH_POINTS:
+        if self.winner is not None:
+            # No next game: undo the switch after the final one, which (if it
+            # was the deciding game) included the mid-game switch.
+            switches -= 1
+            if min(self._games) == self._games_to_win - 1:
+                switches += 1
+        elif self.deciding_game and max(self._points) >= DECIDING_GAME_SWITCH_POINTS:
             switches += 1
         return 1 if switches % 2 == 0 else 2
 

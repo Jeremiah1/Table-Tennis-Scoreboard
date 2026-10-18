@@ -12,6 +12,8 @@ GAME_COLOR = 0x00C000
 LOCKED_COLOR = 0x00C000
 HINT_COLOR = 0x606060
 WINNER_COLOR = 0xFFD000
+# Menu entries in the name list (such as STATS), so they don't read as names.
+MENU_COLOR = 0xC000FF
 
 WIDTH = 128
 HEIGHT = 64
@@ -22,6 +24,17 @@ SERVE_BAR_GAP = 1
 # terminalio.FONT glyphs are 6 pixels wide at scale 1.
 GLYPH_WIDTH = 6
 
+# Characters that fit across half the board, inside the margins.
+HALF_CHARS = (HALF - 2 * NAME_MARGIN) // GLYPH_WIDTH
+
+LEADERBOARD_ROWS = 4
+# Leaderboard columns: rank and record/rate are right-aligned at these x
+# positions, names left-aligned. Fits a 9-letter name, "12-10" and "100%".
+RANK_RIGHT = 6
+NAME_LEFT = 9
+RECORD_RIGHT = 97
+RATE_RIGHT = WIDTH - 1
+
 def solid(color):
     palette = displayio.Palette(1)
     palette[0] = color
@@ -30,13 +43,14 @@ def solid(color):
 def rect(x, y, w, h, color):
     return vectorio.Rectangle(pixel_shader=solid(color), x=x, y=y, width=w, height=h)
 
-def text(txt, color, x, y, scale=1):
+def text(txt, color, x, y, scale=1, anchor_x=0.5):
+    """A label anchored at (x, y): centered by default, anchor_x 0 for left and 1 for right."""
     return label.Label(
         terminalio.FONT,
         text=txt,
         color=color,
         scale=scale,
-        anchor_point=(0.5, 0.5),
+        anchor_point=(anchor_x, 0.5),
         anchored_position=(x,y)
     )
 
@@ -137,7 +151,8 @@ class ScoreboardDisplay:
 
 class NameSelectDisplay:
 
-    def __init__(self, display):
+    def __init__(self, display, menu_names=()):
+        self._menu_names = menu_names
         root = split_layout()
         self._names = []
         self._statuses = []
@@ -153,17 +168,31 @@ class NameSelectDisplay:
             root.append(status)
         display.root_group = root
 
-    def render(self, selection):
+    def render(self, selection, summaries=(None, None)):
+        """summaries: per player, a stats line to show in place of HOLD=LOCK, or None."""
         for index in range(2):
             player = index + 1
             name = selection.current(player)
             locked = selection.is_locked(player)
             name_label = self._names[index]
             name_label.text = name
-            name_label.color = LOCKED_COLOR if locked else SCORE_COLOR
             status = self._statuses[index]
-            status.text = "READY" if locked else "HOLD=LOCK"
-            status.color = LOCKED_COLOR if locked else HINT_COLOR
+            if name in self._menu_names:
+                name_label.color = MENU_COLOR
+                status.text = "HOLD=OPEN"
+                status.color = HINT_COLOR
+            elif locked:
+                name_label.color = LOCKED_COLOR
+                status.text = "READY"
+                status.color = LOCKED_COLOR
+            elif summaries[index] is not None:
+                name_label.color = SCORE_COLOR
+                status.text = summaries[index]
+                status.color = P1_COLOR
+            else:
+                name_label.color = SCORE_COLOR
+                status.text = "HOLD=LOCK"
+                status.color = HINT_COLOR
 
 class ServeSelectDisplay:
     """Asks who serves first, with serve bars around the chosen player's name.
@@ -212,4 +241,64 @@ class WinnerDisplay:
         root.append(text(winner_name, SCORE_COLOR, HALF, 33, scale=name_scale))
         score = "{} - {}".format(winner_games, loser_games)
         root.append(text(score, GAME_COLOR, HALF, 56))
+        display.root_group = root
+
+def format_record(won, lost):
+    return "{}-{}".format(won, lost)
+
+def format_rate(rate):
+    return "--" if rate is None else "{}%".format(rate)
+
+class LeaderboardDisplay:
+    """One page of the leaderboard: rank, name, match record and match win rate."""
+
+    def __init__(self, display, entries, first_rank):
+        root = displayio.Group()
+        root.append(rect(0, 11, WIDTH, 1, LINE_COLOR))
+        root.append(text("PLAYER", HINT_COLOR, NAME_LEFT, 5, anchor_x=0))
+        root.append(text("W-L", HINT_COLOR, RECORD_RIGHT, 5, anchor_x=1))
+        root.append(text("WIN", HINT_COLOR, RATE_RIGHT, 5, anchor_x=1))
+        for row, (name, record) in enumerate(entries):
+            y = 18 + row * 12
+            root.append(text(str(first_rank + row), HINT_COLOR, RANK_RIGHT, y, anchor_x=1))
+            root.append(text(name, SCORE_COLOR, NAME_LEFT, y, anchor_x=0))
+            record_text = format_record(record.matches_won, record.matches_lost)
+            root.append(text(record_text, SCORE_COLOR, RECORD_RIGHT, y, anchor_x=1))
+            rate_text = format_rate(record.match_win_rate)
+            root.append(text(rate_text, GAME_COLOR, RATE_RIGHT, y, anchor_x=1))
+        display.root_group = root
+
+class PlayerCardDisplay:
+    """One player's stats: matches on the left, games on the right."""
+
+    def __init__(self, display, name, record, rank):
+        root = displayio.Group()
+        root.append(rect(0, 11, WIDTH, 1, LINE_COLOR))
+        root.append(rect(0, 51, WIDTH, 1, LINE_COLOR))
+        root.append(rect(HALF - 1, 12, 2, 39, LINE_COLOR))
+        root.append(text(name, P1_COLOR, HALF, 5))
+        columns = (
+            ("MATCHES", record.matches_won, record.matches_lost, record.match_win_rate),
+            ("GAMES", record.games_won, record.games_lost, record.game_win_rate),
+        )
+        for index, (heading, won, lost, rate) in enumerate(columns):
+            center = section_center(index)
+            root.append(text(heading, HINT_COLOR, center, 17))
+            root.append(text(format_record(won, lost), SCORE_COLOR, center, 28))
+            root.append(text(format_rate(rate), GAME_COLOR, center, 42, scale=2))
+        played = "{} PLAYED".format(record.matches_played)
+        footer = played if rank is None else "RANK {}  {}".format(rank, played)
+        root.append(text(footer, HINT_COLOR, HALF, 57))
+        display.root_group = root
+
+class MessageDisplay:
+    """One or two lines of large text, with an optional hint along the bottom."""
+
+    def __init__(self, display, lines, hint=None, color=SCORE_COLOR):
+        root = displayio.Group()
+        rows = (28,) if len(lines) == 1 else (18, 38)
+        for line, y in zip(lines, rows):
+            root.append(text(line, color, HALF, y, scale=fit_scale(line, WIDTH - 2 * NAME_MARGIN, 2)))
+        if hint is not None:
+            root.append(text(hint, HINT_COLOR, HALF, 57))
         display.root_group = root

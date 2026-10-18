@@ -126,6 +126,19 @@ class SidesTest(unittest.TestCase):
             match.award_point(1)
         self.assertEqual(match.player_on_side(LEFT), 1)
 
+    def test_finished_match_keeps_final_game_ends(self):
+        match = TableTennisMatch(games_to_win=2)
+        win_game(match, 1)  # game 2 at swapped ends
+        win_game(match, 1)
+        self.assertEqual(match.player_on_side(LEFT), 2)
+
+    def test_finished_deciding_game_keeps_mid_game_switch(self):
+        match = TableTennisMatch(games_to_win=2)
+        win_game(match, 1)
+        win_game(match, 2)  # deciding game starts with player 1 left, switches at 5
+        win_game(match, 2)
+        self.assertEqual(match.player_on_side(LEFT), 2)
+
     def test_rejects_invalid_side(self):
         with self.assertRaises(ValueError):
             TableTennisMatch().player_on_side(3)

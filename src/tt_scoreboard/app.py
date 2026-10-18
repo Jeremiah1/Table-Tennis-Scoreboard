@@ -1,6 +1,7 @@
 import board
 import espnow
 import keypad
+import microcontroller
 import supervisor  # pyright: ignore[reportMissingModuleSource]  (CircuitPython built-in; stubs only)
 import time
 import wifi
@@ -10,14 +11,21 @@ from tt_scoreboard.name_selection import NameSelection, distinct_names
 from tt_scoreboard.remote_link import PRESSED, RELEASED, RemoteButtons
 from tt_scoreboard.scoring import TableTennisMatch
 from tt_scoreboard.screens import (
+    HALF_CHARS,
     HEIGHT,
+    LEADERBOARD_ROWS,
     WIDTH,
+    WINNER_COLOR,
+    LeaderboardDisplay,
+    MessageDisplay,
     NameSelectDisplay,
+    PlayerCardDisplay,
     ScoreboardDisplay,
     ServeSelectDisplay,
     WinnerDisplay,
     validate_player_names,
 )
+from tt_scoreboard.stats import NvmStore, StatsBook, summary
 
 # Names must fit beside the serve markers on the scoreboard: 8 characters max.
 PLAYER_NAMES = (
@@ -29,9 +37,11 @@ PLAYER_NAMES = (
     "PLAYER 6",
     "PLAYER 7"
 )
-# Available to both players, for anyone not in PLAYER_NAMES. Listed last, so a
-# double tap from the start of the list reaches it.
+# Available to both players, for anyone not in PLAYER_NAMES. Guests have no stats.
 GUEST_NAME = "GUEST"
+# Menu entry at the end of the name list (a double tap from the start reaches
+# it); hold on it to browse the stats.
+STATS_ENTRY = "STATS"
 GAMES_TO_WIN = 4  # Best of 7
 
 HOLD_MS = 1000
@@ -39,6 +49,20 @@ HOLD_MS = 1000
 DOUBLE_TAP_MS = 300
 READY_PAUSE_S = 1.0
 WINNER_TIMEOUT_MS = 30000
+# A player's stats replace HOLD=LOCK once their cursor rests on a name this long.
+NAME_STATS_DELAY_MS = 1000
+# The name screen starts cycling through the stats after this long untouched.
+IDLE_STATS_MS = 60000
+# How long each page shows while stats cycle by themselves.
+LEADERBOARD_PAGE_MS = 6000
+CARD_PAGE_MS = 5000
+# Browsing stats returns to the name screen after this long untouched.
+STATS_BROWSE_TIMEOUT_MS = 60000
+# Hold both buttons this long on a stats screen to ask about a reset, then this
+# long again to confirm it.
+RESET_HOLD_MS = 5000
+RESET_CONFIRM_HOLD_MS = 3000
+RESET_CONFIRM_TIMEOUT_MS = 15000
 LOOP_DELAY_S = 0.01
 # Receive the wireless arcade-button remotes (the onboard buttons always work).
 REMOTES_ENABLED = True
@@ -117,6 +141,22 @@ class ButtonInput:
         key, gesture = detected
         return key % 2 + 1, gesture
 
+    def held_ms(self, side):
+        """How long the side's button has been down, or 0.
+
+        The longest of the side's onboard and remote buttons. Only up to date
+        as of the last next_gesture() call.
+        """
+        now = supervisor.ticks_ms()
+        return max(
+            self._gestures.held_ms(side - 1, now),
+            self._gestures.held_ms(self._REMOTE_KEY_OFFSET + side - 1, now),
+        )
+
+    def both_held_ms(self):
+        """How long both sides' buttons have been down together, or 0."""
+        return min(self.held_ms(1), self.held_ms(2))
+
     def clear(self, double_tap=False):
         """Discard pending input, including any press still in progress."""
         self._keys.events.clear()
@@ -130,29 +170,72 @@ class ButtonInput:
         if self._remotes is not None:
             self._remotes.deinit()
 
-def select_players(display, buttons):
+def select_players(display, buttons, stats, start_names=None):
     """Tap for the next name, double tap for the previous one, hold to lock in (or unlock).
 
-    The left button picks player 1, who starts at the left end.
+    The left button picks player 1, who starts at the left end. Names are
+    listed most recently played first, and the cursors start on start_names
+    (the last match's players, by the ends they finished at). Resting on a
+    name shows that player's stats under it.
+
+    Holding on STATS browses the stats, and the stats also cycle by
+    themselves after IDLE_STATS_MS untouched. Either way the selection is
+    kept. Returns the two selected names as listed (guests not yet numbered).
     """
-    selection = NameSelection(PLAYER_NAMES + (GUEST_NAME,), shared_names=(GUEST_NAME,))
-    screen = NameSelectDisplay(display)
-    screen.render(selection)
-    buttons.clear(double_tap=True)
+    selection = NameSelection(
+        stats.by_recent(PLAYER_NAMES) + (GUEST_NAME, STATS_ENTRY),
+        shared_names=(GUEST_NAME,),
+        menu_names=(STATS_ENTRY,),
+        start_names=start_names,
+    )
+    screen = None
     while not selection.complete:
+        now = supervisor.ticks_ms()
+        if screen is None:
+            screen = NameSelectDisplay(display, menu_names=(STATS_ENTRY,))
+            buttons.clear(double_tap=True)
+            idle_since = now
+            # Per player: the name the cursor is on and when it got there.
+            resting = [(None, now), (None, now)]
+            shown = None
+            # Worked out once: ranking every player on each pass would be slow.
+            name_stats = {
+                name: summary(stats.record(name), stats.rank(name), HALF_CHARS)
+                for name in PLAYER_NAMES
+            }
         event = buttons.next_gesture()
         if event is not None:
+            idle_since = now
             player, gesture = event
             if gesture == TAP:
                 selection.cycle(player)
             elif gesture == DOUBLE_TAP:
                 selection.cycle_back(player)
+            elif selection.on_menu(player):
+                show_stats(display, buttons, stats, stats_pages(display, stats), browse=True)
+                screen = None
+                continue
             else:
                 selection.toggle_lock(player)
-            screen.render(selection)
+        elif stats.has_stats and ticks_diff(now, idle_since) >= IDLE_STATS_MS:
+            show_stats(display, buttons, stats, stats_pages(display, stats), repeat=True)
+            screen = None
+            continue
+        summaries = []
+        for index in range(2):
+            name = selection.current(index + 1)
+            if resting[index][0] != name:
+                resting[index] = (name, now)
+            rested = ticks_diff(now, resting[index][1]) >= NAME_STATS_DELAY_MS
+            summaries.append(name_stats.get(name) if rested else None)
+        state = (selection.current(1), selection.current(2),
+                 selection.is_locked(1), selection.is_locked(2), summaries[0], summaries[1])
+        if state != shown:
+            screen.render(selection, summaries)
+            shown = state
         time.sleep(LOOP_DELAY_S)
     time.sleep(READY_PAUSE_S)
-    return distinct_names(selection.selected_names)
+    return selection.selected_names
 
 def select_server(display, buttons, player_names):
     """Tap your button to serve first, then hold either button to start.
@@ -228,19 +311,118 @@ def announce_winner(display, buttons, player_names, match):
                 return False
         time.sleep(LOOP_DELAY_S)
 
+def player_card_page(display, stats, name):
+    """A (duration, show) page for the player's card."""
+    return CARD_PAGE_MS, lambda: PlayerCardDisplay(display, name, stats.record(name), stats.rank(name))
+
+def stats_pages(display, stats):
+    """(duration, show) pages: the leaderboard, then each ranked player's card."""
+    ranking = stats.ranking()
+    if not ranking:
+        return [(CARD_PAGE_MS, lambda: MessageDisplay(display, ("NO STATS", "YET")))]
+    pages = []
+    for start in range(0, len(ranking), LEADERBOARD_ROWS):
+        entries = ranking[start:start + LEADERBOARD_ROWS]
+        pages.append((
+            LEADERBOARD_PAGE_MS,
+            lambda entries=entries, start=start: LeaderboardDisplay(display, entries, start + 1),
+        ))
+    for name, _ in ranking:
+        pages.append(player_card_page(display, stats, name))
+    return pages
+
+def show_stats(display, buttons, stats, pages, browse=False, repeat=False):
+    """Show stats pages until the viewer leaves.
+
+    Browsing: tap for the next page, double tap for the previous one, hold to
+    leave; also leaves after STATS_BROWSE_TIMEOUT_MS untouched. Otherwise each
+    page shows for its own duration and any press leaves; repeat loops the
+    pages instead of leaving after the last one.
+
+    Holding both buttons for RESET_HOLD_MS asks whether to reset all stats.
+    """
+    index = 0
+    pages[index][1]()
+    buttons.clear(double_tap=browse)
+    shown_at = supervisor.ticks_ms()
+    while True:
+        event = buttons.next_gesture()
+        if buttons.both_held_ms() >= RESET_HOLD_MS:
+            confirm_reset(display, buttons, stats)
+            return
+        if event is not None:
+            side, gesture = event
+            # A hold while the other button is down may be the start of a reset.
+            if not (gesture == HOLD and buttons.held_ms(3 - side)):
+                if not browse or gesture == HOLD:
+                    return
+                index = (index + (1 if gesture == TAP else -1)) % len(pages)
+                pages[index][1]()
+                shown_at = supervisor.ticks_ms()
+        elapsed = ticks_diff(supervisor.ticks_ms(), shown_at)
+        if browse:
+            if elapsed >= STATS_BROWSE_TIMEOUT_MS:
+                return
+        elif elapsed >= pages[index][0]:
+            index += 1
+            if index == len(pages):
+                if not repeat:
+                    return
+                index = 0
+            pages[index][1]()
+            shown_at = supervisor.ticks_ms()
+        time.sleep(LOOP_DELAY_S)
+
+def confirm_reset(display, buttons, stats):
+    """Reset all stats if both buttons are held again; any other press cancels."""
+    MessageDisplay(display, ("RESET ALL", "STATS?"), hint="HOLD BOTH=YES TAP=NO", color=WINNER_COLOR)
+    # The buttons still down from the request must be released and pressed again.
+    buttons.clear()
+    shown_at = supervisor.ticks_ms()
+    while ticks_diff(supervisor.ticks_ms(), shown_at) < RESET_CONFIRM_TIMEOUT_MS:
+        event = buttons.next_gesture()
+        if buttons.both_held_ms() >= RESET_CONFIRM_HOLD_MS:
+            stats.reset()
+            MessageDisplay(display, ("STATS", "RESET"))
+            time.sleep(READY_PAUSE_S)
+            break
+        if event is not None:
+            side, gesture = event
+            if not (gesture == HOLD and buttons.held_ms(3 - side)):
+                break
+        time.sleep(LOOP_DELAY_S)
+    buttons.clear()
+
+def show_match_stats(display, buttons, stats, player_names, winner):
+    """Briefly show the winner's and then the loser's updated card (guests have none)."""
+    order = (player_names[winner - 1], player_names[2 - winner])
+    pages = [player_card_page(display, stats, name) for name in order if stats.record(name)]
+    if pages:
+        show_stats(display, buttons, stats, pages)
+
 def main():
-    validate_player_names(PLAYER_NAMES + (GUEST_NAME,) + distinct_names((GUEST_NAME, GUEST_NAME)))
+    validate_player_names(
+        PLAYER_NAMES + (GUEST_NAME, STATS_ENTRY) + distinct_names((GUEST_NAME, GUEST_NAME))
+    )
+    stats = StatsBook(PLAYER_NAMES, NvmStore(microcontroller.nvm))
     matrix = Matrix(width=WIDTH, height=HEIGHT, bit_depth=2)
     remotes = RemoteReceiver(REMOTE_TIMEOUT_MS) if REMOTES_ENABLED else None
     buttons = ButtonInput(hold_ms=HOLD_MS, double_tap_ms=DOUBLE_TAP_MS, remotes=remotes)
+    start_names = None
     try:
         while True:
-            player_names = select_players(matrix.display, buttons)
+            selected = select_players(matrix.display, buttons, stats, start_names)
+            player_names = distinct_names(selected)
             first_server = select_server(matrix.display, buttons, player_names)
             match = TableTennisMatch(first_server=first_server, games_to_win=GAMES_TO_WIN)
             while True:
                 play_match(matrix.display, buttons, player_names, match)
                 if not announce_winner(matrix.display, buttons, player_names, match):
                     break
+            stats.record_match(player_names, match.games, match.winner)
+            # Start the next name selection with each player at the end they finished at.
+            left = match.left_player
+            start_names = (selected[left - 1], selected[2 - left])
+            show_match_stats(matrix.display, buttons, stats, player_names, match.winner)
     finally:
         buttons.deinit()

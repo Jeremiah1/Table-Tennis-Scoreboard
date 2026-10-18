@@ -96,6 +96,13 @@ class GestureDetector:
                 self._held[key] = True
                 self._report_hold(key)
 
+    def held_ms(self, key, now):
+        """How long the key has been down, or 0 if it is up (or was reset while down)."""
+        pressed_at = self._pressed_at[key]
+        if pressed_at is None:
+            return 0
+        return ticks_diff(now, pressed_at)
+
     def next_gesture(self):
         """Return the oldest undelivered (key, gesture) pair, or None."""
         if self._gestures:

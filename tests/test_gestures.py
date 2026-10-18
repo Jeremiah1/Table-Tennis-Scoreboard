@@ -84,6 +84,18 @@ class GestureDetectorTest(DetectorTestCase):
         self.detector.release(0, HOLD_MS * 2)
         self.assertEqual(self.drain(), [])
 
+    def test_held_ms(self):
+        self.assertEqual(self.detector.held_ms(0, 100), 0)
+        self.detector.press(0, 100)
+        self.assertEqual(self.detector.held_ms(0, 5100), 5000)
+        self.detector.release(0, 5200)
+        self.assertEqual(self.detector.held_ms(0, 5300), 0)
+
+    def test_held_ms_forgets_reset_key(self):
+        self.detector.press(0, 0)
+        self.detector.reset()
+        self.assertEqual(self.detector.held_ms(0, 1000), 0)
+
     def test_release_without_press_is_ignored(self):
         self.detector.release(0, 100)
         self.assertEqual(self.drain(), [])

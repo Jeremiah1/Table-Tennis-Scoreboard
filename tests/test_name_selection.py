@@ -150,5 +150,52 @@ class DistinctNamesTest(unittest.TestCase):
         self.assertEqual(distinct_names(("GUEST", "GUEST")), ("GUEST 1", "GUEST 2"))
 
 
+class MenuEntryTest(unittest.TestCase):
+
+    def setUp(self):
+        self.selection = NameSelection(("A", "B", "MENU"), menu_names=("MENU",))
+
+    def test_on_menu(self):
+        self.assertFalse(self.selection.on_menu(1))
+        self.selection.cycle_back(1)
+        self.assertTrue(self.selection.on_menu(1))
+
+    def test_menu_entry_cannot_be_locked(self):
+        self.selection.cycle_back(1)
+        self.selection.toggle_lock(1)
+        self.assertFalse(self.selection.is_locked(1))
+
+    def test_both_players_may_browse_to_menu_entry(self):
+        self.selection.cycle(2)
+        self.selection.cycle_back(1)
+        self.assertEqual(self.selection.current(1), "MENU")
+        self.assertEqual(self.selection.current(2), "MENU")
+
+    def test_needs_two_player_names_besides_menu(self):
+        with self.assertRaises(ValueError):
+            NameSelection(("A", "MENU"), menu_names=("MENU",))
+
+    def test_menu_name_must_be_in_list(self):
+        with self.assertRaises(ValueError):
+            NameSelection(("A", "B"), menu_names=("MENU",))
+
+
+class StartNamesTest(unittest.TestCase):
+
+    def test_cursors_start_on_given_names(self):
+        selection = NameSelection(NAMES, start_names=("C", "A"))
+        self.assertEqual((selection.current(1), selection.current(2)), ("C", "A"))
+
+    def test_unknown_start_name_falls_back(self):
+        selection = NameSelection(NAMES, start_names=("C", "GONE"))
+        self.assertEqual((selection.current(1), selection.current(2)), ("A", "B"))
+
+    def test_same_start_name_only_if_shared(self):
+        selection = NameSelection(NAMES, start_names=("C", "C"))
+        self.assertEqual((selection.current(1), selection.current(2)), ("A", "B"))
+        selection = NameSelection(NAMES, shared_names=("C",), start_names=("C", "C"))
+        self.assertEqual((selection.current(1), selection.current(2)), ("C", "C"))
+
+
 if __name__ == "__main__":
     unittest.main()
