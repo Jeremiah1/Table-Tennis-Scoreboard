@@ -95,3 +95,7 @@ Stats are kept in the board's non-volatile memory, not on the CIRCUITPY drive, s
 The logic in `src/tt_scoreboard/` that doesn't touch hardware (`scoring.py`, `name_selection.py`, `gestures.py`, `remote_link.py`, `stats.py`) can be tested on desktop Python:
 
     python3 -m unittest discover -s tests -t .
+
+## License
+
+Released under the [MIT License](LICENSE): free for anyone to use, copy, modify and share.
