@@ -2,12 +2,13 @@ import board
 import espnow
 import keypad
 import microcontroller
+import os
 import supervisor  # pyright: ignore[reportMissingModuleSource]  (CircuitPython built-in; stubs only)
 import time
 import wifi
 from adafruit_matrixportal.matrix import Matrix
 from tt_scoreboard.gestures import DOUBLE_TAP, HOLD, TAP, GestureDetector, ticks_diff
-from tt_scoreboard.name_selection import NameSelection, distinct_names
+from tt_scoreboard.name_selection import NameSelection, distinct_names, parse_player_names
 from tt_scoreboard.remote_link import PRESSED, RELEASED, RemoteButtons
 from tt_scoreboard.scoring import TableTennisMatch
 from tt_scoreboard.screens import (
@@ -28,14 +29,11 @@ from tt_scoreboard.screens import (
 from tt_scoreboard.stats import NvmStore, StatsBook, summary
 
 # Names must fit beside the serve markers on the scoreboard: 8 characters max.
-PLAYER_NAMES = (
-    "PLAYER 1",
-    "PLAYER 2",
-    "PLAYER 3",
-    "PLAYER 4",
-    "PLAYER 5",
-    "PLAYER 6",
-    "PLAYER 7"
+# They come from TT_PLAYERS in the board's settings.toml (a comma-separated
+# list, written by deploy.sh from players.txt), so they stay out of the code.
+PLAYER_NAMES = parse_player_names(
+    os.getenv("TT_PLAYERS"),
+    default=("PLAYER 1", "PLAYER 2", "PLAYER 3", "PLAYER 4"),
 )
 # Available to both players, for anyone not in PLAYER_NAMES. Guests have no stats.
 GUEST_NAME = "GUEST"

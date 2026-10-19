@@ -7,3 +7,5 @@ secrets.py
 .env
 .env.*
 !.env.example
+# Real player names; deploy.sh copies them to the board.
+players.txt

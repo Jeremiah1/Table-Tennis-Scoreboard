@@ -1,6 +1,6 @@
 import unittest
 
-from tt_scoreboard.name_selection import NameSelection, distinct_names
+from tt_scoreboard.name_selection import NameSelection, distinct_names, parse_player_names
 
 NAMES = ("A", "B", "C")
 
@@ -195,6 +195,20 @@ class StartNamesTest(unittest.TestCase):
         self.assertEqual((selection.current(1), selection.current(2)), ("A", "B"))
         selection = NameSelection(NAMES, shared_names=("C",), start_names=("C", "C"))
         self.assertEqual((selection.current(1), selection.current(2)), ("C", "C"))
+
+
+class ParsePlayerNamesTest(unittest.TestCase):
+
+    def test_splits_and_trims(self):
+        self.assertEqual(parse_player_names(" A, B ,C,"), ("A", "B", "C"))
+
+    def test_missing_or_empty_uses_default(self):
+        self.assertEqual(parse_player_names(None, default=("X", "Y")), ("X", "Y"))
+        self.assertEqual(parse_player_names(" , ", default=("X", "Y")), ("X", "Y"))
+
+    def test_duplicates_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_player_names("A,B,A")
 
 
 if __name__ == "__main__":

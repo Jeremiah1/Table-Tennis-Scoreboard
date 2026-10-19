@@ -113,3 +113,15 @@ def distinct_names(names):
     if first == second:
         return "{} 1".format(first), "{} 2".format(second)
     return first, second
+
+def parse_player_names(text, default=()):
+    """Split a comma-separated list of names (as stored in settings.toml).
+
+    Returns default if text is empty or missing.
+    """
+    names = tuple(name.strip() for name in str(text or "").split(",") if name.strip())
+    if not names:
+        return tuple(default)
+    if len(set(names)) != len(names):
+        raise ValueError("Player names must be unique")
+    return names

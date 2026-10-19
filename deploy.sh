@@ -5,6 +5,8 @@
 #        ./deploy.sh remote --side left|right [--dry-run] [MOUNT_POINT]
 #
 #   scoreboard  The Matrix Portal S3 driving the LED matrix.
+#               Player names come from players.txt (one per line), saved as
+#               TT_PLAYERS in the board's settings.toml.
 #   remote      A QT Py ESP32-S3 wireless arcade-button remote.
 #   --side SIDE Which end of the table the remote is mounted at, left or right
 #               (saved in its settings.toml).
@@ -18,10 +20,11 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$PROJECT_DIR/src"
 PACKAGE="tt_scoreboard"
+PLAYERS_FILE="$PROJECT_DIR/players.txt"
 # Loose modules on the scoreboard from before the code moved into the package.
 LEGACY_FILES=(scoring.py screens.py gestures.py name_selection.py)
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
 fail() { echo "$*" >&2; exit 1; }
 
 target=""
@@ -94,24 +97,46 @@ run() {
 
 echo "Deploying $target to $mount_point ($(board_id "$mount_point"))"
 
-if [[ "$target" == remote ]]; then
-    # Written before the code so the remote never starts without a side.
-    settings="$mount_point/settings.toml"
-    if [[ -f "$settings" ]] && grep -q '^[[:space:]]*TT_SIDE[[:space:]]*=' "$settings"; then
-        run sed -i "s/^[[:space:]]*TT_SIDE[[:space:]]*=.*/TT_SIDE = \"$side\"/" "$settings"
+# Set KEY = "VALUE" in the board's settings.toml, keeping any other settings.
+set_setting() {
+    local key="$1" value="$2" settings="$mount_point/settings.toml"
+    if [[ -f "$settings" ]] && grep -q "^[[:space:]]*$key[[:space:]]*=" "$settings"; then
+        run sed -i "s/^[[:space:]]*$key[[:space:]]*=.*/$key = \"$value\"/" "$settings"
     elif $dry_run; then
-        echo "[dry-run] append TT_SIDE = \"$side\" to $settings"
+        echo "[dry-run] append $key = \"$value\" to $settings"
     else
         # Make sure an existing last line is terminated before appending.
         [[ -s "$settings" && -n "$(tail -c 1 "$settings")" ]] && echo >> "$settings"
-        echo "TT_SIDE = \"$side\"" >> "$settings"
+        echo "$key = \"$value\"" >> "$settings"
     fi
+}
+
+# Written before the code so the board never starts without its settings.
+if [[ "$target" == remote ]]; then
+    set_setting TT_SIDE "$side"
     # Remotes used to belong to a player rather than a side.
+    settings="$mount_point/settings.toml"
     if [[ -f "$settings" ]] && grep -q '^[[:space:]]*TT_PLAYER[[:space:]]*=' "$settings"; then
         echo "Removing legacy TT_PLAYER setting"
         run sed -i '/^[[:space:]]*TT_PLAYER[[:space:]]*=/d' "$settings"
     fi
     echo "Side set to $side"
+elif [[ -f "$PLAYERS_FILE" ]]; then
+    players=()
+    while read -r name || [[ -n "$name" ]]; do
+        name="${name%%#*}"
+        name="${name#"${name%%[![:space:]]*}"}"  # Trim leading whitespace,
+        name="${name%"${name##*[![:space:]]}"}"  # then trailing.
+        [[ -z "$name" ]] && continue
+        [[ "$name" =~ ^[A-Za-z0-9\ ._\'-]+$ ]] \
+            || fail "Unsupported character in player name \"$name\" (use letters, digits, spaces, . _ ' -)"
+        players+=("$name")
+    done < "$PLAYERS_FILE"
+    [[ ${#players[@]} -ge 2 ]] || fail "$PLAYERS_FILE needs at least two names"
+    set_setting TT_PLAYERS "$(IFS=,; echo "${players[*]}")"
+    echo "Players set to ${players[*]}"
+else
+    echo "No players.txt; leaving the board's player names as they are."
 fi
 
 # Copy the package before code.py: CircuitPython reloads on each write, and the

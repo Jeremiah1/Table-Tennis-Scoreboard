@@ -1,0 +1,7 @@
+# Player names for the scoreboard, one per line (8 characters max).
+# Copy this file to players.txt (ignored by git) and edit it, then run
+# ./deploy.sh scoreboard to save the names on the board.
+PLAYER 1
+PLAYER 2
+PLAYER 3
+PLAYER 4
