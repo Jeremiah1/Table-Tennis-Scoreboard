@@ -18,7 +18,7 @@ from neopixel_write import neopixel_write
 from tt_scoreboard.gestures import ticks_diff
 from tt_scoreboard.remote_link import ButtonStateSender
 
-BUTTON_PIN = board.A0
+BUTTON_PIN = board.RX
 # Deep sleep after this long without a press. The press that wakes the remote
 # only wakes it; it is not sent to the scoreboard.
 IDLE_SLEEP_MS = 10 * 60 * 1000

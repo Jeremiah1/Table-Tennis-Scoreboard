@@ -44,7 +44,7 @@ A new QT Py first needs CircuitPython installed: use the installer on circuitpyt
 
 Connect the arcade button's **switch** terminals (the two on the switch body, not the LED terminals) with the quick-connect wires to the Terminal Block BFF:
 
-- one switch terminal to **A0**
+- one switch terminal to **RX** (GPIO 16, which can wake the board from deep sleep)
 - the other switch terminal to **GND**
 
 The pin uses the internal pull-up, so no resistor is needed. The button's LED is not used.
