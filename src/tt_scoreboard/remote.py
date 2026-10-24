@@ -10,6 +10,7 @@ import board
 import digitalio
 import espnow
 import keypad
+import microcontroller
 import os
 import supervisor  # pyright: ignore[reportMissingModuleSource]  (CircuitPython built-in; stubs only)
 import time
@@ -23,6 +24,13 @@ BUTTON_PIN = board.RX
 # only wakes it; it is not sent to the scoreboard.
 IDLE_SLEEP_MS = 10 * 60 * 1000
 LOOP_DELAY_S = 0.002
+# The remote does very little work, and 80 MHz (the lowest clock the radio
+# allows) saves power over the default 240 MHz.
+CPU_FREQUENCY_HZ = 80_000_000
+# The radio is the biggest drain, so it is only on while there is something to
+# send. Restarting it takes about 4 ms, too little to notice. After the last
+# send it stays on briefly so the packet goes out before the radio stops.
+RADIO_OFF_DELAY_MS = 100
 
 BROADCAST_MAC = b"\xff\xff\xff\xff\xff\xff"
 # NeoPixel colors (GRB byte order).
@@ -54,7 +62,8 @@ def blink(color, count, on_s=0.15, off_s=0.15):
         power.value = False
 
 def deep_sleep_until_pressed():
-    # While connected to USB, CircuitPython only simulates deep sleep.
+    # On USB, CircuitPython only simulates deep sleep, unless the board woke
+    # from a real deep sleep: then it sleeps for real and drops off USB.
     wake = alarm.pin.PinAlarm(pin=BUTTON_PIN, value=False, pull=True)
     alarm.exit_and_deep_sleep_until_alarms(wake)
 
@@ -67,7 +76,8 @@ def run(side):
     sender = ButtonStateSender(side, session=int.from_bytes(os.urandom(2), "big"))
     keys = keypad.Keys((BUTTON_PIN,), value_when_pressed=False, pull=True, interval=0.02)
     event = keypad.Event()
-    last_activity = supervisor.ticks_ms()
+    wifi.radio.enabled = False
+    last_activity = last_sent = supervisor.ticks_ms()
     try:
         while True:
             now = supervisor.ticks_ms()
@@ -76,11 +86,16 @@ def run(side):
                 last_activity = now
             message = sender.message_due(now)
             if message is not None:
+                wifi.radio.enabled = True
+                last_sent = now
                 try:
                     radio.send(message, peer)
                 except (OSError, RuntimeError) as error:
                     # The repeats cover an occasional failed send.
                     print("ESP-NOW send failed:", error)
+            elif (sender.idle and wifi.radio.enabled
+                    and ticks_diff(now, last_sent) >= RADIO_OFF_DELAY_MS):
+                wifi.radio.enabled = False
             if sender.idle and ticks_diff(now, last_activity) >= IDLE_SLEEP_MS:
                 return
             time.sleep(LOOP_DELAY_S)
@@ -89,6 +104,7 @@ def run(side):
         radio.deinit()
 
 def main():
+    microcontroller.cpu.frequency = CPU_FREQUENCY_HZ
     try:
         side = configured_side()
     except ValueError:

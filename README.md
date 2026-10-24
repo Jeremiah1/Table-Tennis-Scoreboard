@@ -49,14 +49,18 @@ Connect the arcade button's **switch** terminals (the two on the switch body, no
 
 The pin uses the internal pull-up, so no resistor is needed. The button's LED is not used.
 
-The QT Py ESP32-S3 has no battery charger, so the LiPo needs a charger/connector add-on (such as the LiPo BFF, stacked with the Terminal Block BFF) or an external charger.
+Plug the LiPo into the Terminal Block BFF's JST-PH battery connector. The BFF charges it whenever the QT Py is on USB: its orange CHG LED is lit while charging and the green DONE LED when the battery is full.
 
 ### Behavior
 
 - A remote belongs to an end of the table, not to a player, so it can stay mounted while players change ends. A press scores for whoever is at that end.
 - On power-up or wake, the QT Py's NeoPixel blinks **blue once for the left side, twice for the right**. Ten fast **red** blinks mean `TT_SIDE` is missing; redeploy with `--side`.
 - Each press is broadcast over **ESP-NOW** (no Wi-Fi network needed) and behaves exactly like that side's onboard button: tap, double-tap and hold all work.
-- After 10 minutes without a press the remote goes into deep sleep. **The next press only wakes it** (watch for the blue blink); it is not sent to the scoreboard. While plugged into USB, CircuitPython only simulates deep sleep.
+- After 10 minutes without a press the remote goes into deep sleep. **The next press only wakes it** (watch for the blue blink); it is not sent to the scoreboard. On USB, CircuitPython only simulates deep sleep, unless the remote woke from a real deep sleep: then it sleeps for real and drops off USB until the next press.
+
+### Battery life
+
+The Wi-Fi radio is the biggest drain, so it is only on while the remote is sending: it switches on when the button is pressed or released and off 100 ms after the last packet (it stays on while the button is held, for the heartbeats). Restarting it takes about 4 ms, so presses aren't noticeably delayed. The processor runs at 80 MHz instead of 240 MHz.
 
 ### Radio notes
 
