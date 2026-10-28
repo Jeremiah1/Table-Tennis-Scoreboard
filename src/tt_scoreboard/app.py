@@ -62,6 +62,8 @@ RESET_HOLD_MS = 5000
 RESET_CONFIRM_HOLD_MS = 3000
 RESET_CONFIRM_TIMEOUT_MS = 15000
 LOOP_DELAY_S = 0.01
+# This panel has its red and blue channels swapped; "RGB" for a standard panel.
+MATRIX_COLOR_ORDER = "BGR"
 # Receive the wireless arcade-button remotes (the onboard buttons always work).
 REMOTES_ENABLED = True
 # A held remote button is forgotten if its heartbeats stop for this long.
@@ -84,6 +86,10 @@ class RemoteReceiver:
             packet = self._espnow.read()
         events.extend(self._buttons.check_timeouts(now))
         return events
+
+    def battery(self, side):
+        """The side's remote battery charge in percent, or None if not reported yet."""
+        return self._buttons.battery(side)
 
     def deinit(self):
         self._espnow.deinit()
@@ -155,6 +161,14 @@ class ButtonInput:
         """How long both sides' buttons have been down together, or 0."""
         return min(self.held_ms(1), self.held_ms(2))
 
+    @property
+    def has_remotes(self):
+        return self._remotes is not None
+
+    def battery(self, side):
+        """The side's remote battery charge in percent, or None if unknown."""
+        return None if self._remotes is None else self._remotes.battery(side)
+
     def clear(self, double_tap=False):
         """Discard pending input, including any press still in progress."""
         self._keys.events.clear()
@@ -190,7 +204,9 @@ def select_players(display, buttons, stats, start_names=None):
     while not selection.complete:
         now = supervisor.ticks_ms()
         if screen is None:
-            screen = NameSelectDisplay(display, menu_names=(STATS_ENTRY,))
+            screen = NameSelectDisplay(
+                display, menu_names=(STATS_ENTRY,), show_batteries=buttons.has_remotes
+            )
             buttons.clear(double_tap=True)
             idle_since = now
             # Per player: the name the cursor is on and when it got there.
@@ -226,10 +242,12 @@ def select_players(display, buttons, stats, start_names=None):
                 resting[index] = (name, now)
             rested = ticks_diff(now, resting[index][1]) >= NAME_STATS_DELAY_MS
             summaries.append(name_stats.get(name) if rested else None)
+        batteries = (buttons.battery(1), buttons.battery(2))
         state = (selection.current(1), selection.current(2),
-                 selection.is_locked(1), selection.is_locked(2), summaries[0], summaries[1])
+                 selection.is_locked(1), selection.is_locked(2), summaries[0], summaries[1],
+                 batteries)
         if state != shown:
-            screen.render(selection, summaries)
+            screen.render(selection, summaries, batteries)
             shown = state
         time.sleep(LOOP_DELAY_S)
     time.sleep(READY_PAUSE_S)
@@ -403,7 +421,7 @@ def main():
         PLAYER_NAMES + (GUEST_NAME, STATS_ENTRY) + distinct_names((GUEST_NAME, GUEST_NAME))
     )
     stats = StatsBook(PLAYER_NAMES, NvmStore(microcontroller.nvm))
-    matrix = Matrix(width=WIDTH, height=HEIGHT, bit_depth=2)
+    matrix = Matrix(width=WIDTH, height=HEIGHT, bit_depth=2, color_order=MATRIX_COLOR_ORDER)
     remotes = RemoteReceiver(REMOTE_TIMEOUT_MS) if REMOTES_ENABLED else None
     buttons = ButtonInput(hold_ms=HOLD_MS, double_tap_ms=DOUBLE_TAP_MS, remotes=remotes)
     start_names = None

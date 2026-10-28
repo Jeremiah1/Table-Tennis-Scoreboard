@@ -14,6 +14,16 @@ HINT_COLOR = 0x606060
 WINNER_COLOR = 0xFFD000
 # Menu entries in the name list (such as STATS), so they don't read as names.
 MENU_COLOR = 0xC000FF
+# Remote battery charge: at least BATTERY_OK_PERCENT is green, at least
+# BATTERY_LOW_PERCENT yellow, and below that red.
+BATTERY_OK_COLOR = 0x00C000
+BATTERY_LOW_COLOR = 0xFFD000
+BATTERY_EMPTY_COLOR = 0xFF0000
+BATTERY_OK_PERCENT = 50
+BATTERY_LOW_PERCENT = 20
+# The remotes' button colors, left end of the table first.
+REMOTE_NAMES = ("BLUE", "RED")
+REMOTE_COLORS = (0x0040FF, 0xFF0000)
 
 WIDTH = 128
 HEIGHT = 64
@@ -60,6 +70,18 @@ def fit_scale(txt, width, max_scale):
 
 def player_color(index):
     return P1_COLOR if index == 0 else P2_COLOR
+
+def battery_charge(percent):
+    """Text and charge tier color for a remote's battery (percent may be None)."""
+    if percent is None:
+        return "--", HINT_COLOR
+    if percent >= BATTERY_OK_PERCENT:
+        color = BATTERY_OK_COLOR
+    elif percent >= BATTERY_LOW_PERCENT:
+        color = BATTERY_LOW_COLOR
+    else:
+        color = BATTERY_EMPTY_COLOR
+    return "{}%".format(percent), color
 
 def section_center(index):
     return HALF // 2 + index * HALF
@@ -150,15 +172,32 @@ class ScoreboardDisplay:
             self._games[side].text = "GAMES {}".format(match.games[player - 1])
 
 class NameSelectDisplay:
+    """Picks the two players. With show_batteries, each half's header shows
+    that end's remote (by button color) and its battery charge, such as
+    BLUE 87%, in place of PLAYER 1 or PLAYER 2.
+    """
 
-    def __init__(self, display, menu_names=()):
+    def __init__(self, display, menu_names=(), show_batteries=False):
         self._menu_names = menu_names
+        self._show_batteries = show_batteries
         root = split_layout()
+        # Per side, the remote's name and its charge, as separate labels so
+        # each has its own color.
+        self._remote_labels = []
+        self._charges = []
         self._names = []
         self._statuses = []
         for index in range(2):
             center = section_center(index)
-            root.append(text("PLAYER {}".format(index + 1), player_color(index), center, 5))
+            if show_batteries:
+                remote = text(REMOTE_NAMES[index], REMOTE_COLORS[index], center, 5, anchor_x=0)
+                charge = text(" ", HINT_COLOR, center, 5, anchor_x=0)
+                self._remote_labels.append(remote)
+                self._charges.append(charge)
+                root.append(remote)
+                root.append(charge)
+            else:
+                root.append(text("PLAYER {}".format(index + 1), player_color(index), center, 5))
             # Fixed scale so every name is drawn with the same stroke width.
             name = text(" ", SCORE_COLOR, center, 31)
             status = text(" ", HINT_COLOR, center, 57)
@@ -168,9 +207,14 @@ class NameSelectDisplay:
             root.append(status)
         display.root_group = root
 
-    def render(self, selection, summaries=(None, None)):
-        """summaries: per player, a stats line to show in place of HOLD=LOCK, or None."""
+    def render(self, selection, summaries=(None, None), batteries=(None, None)):
+        """summaries: per player, a stats line to show in place of HOLD=LOCK, or None.
+
+        batteries: per side, the remote's charge in percent, or None if unknown.
+        """
         for index in range(2):
+            if self._show_batteries:
+                self._render_battery(index, batteries[index])
             player = index + 1
             name = selection.current(player)
             locked = selection.is_locked(player)
@@ -193,6 +237,18 @@ class NameSelectDisplay:
                 name_label.color = SCORE_COLOR
                 status.text = "HOLD=LOCK"
                 status.color = HINT_COLOR
+
+    def _render_battery(self, side, percent):
+        """Center the side's "NAME CHARGE" header, whose width changes with the charge."""
+        charge_text, color = battery_charge(percent)
+        remote_text = REMOTE_NAMES[side]
+        width = (len(remote_text) + 1 + len(charge_text)) * GLYPH_WIDTH
+        left = section_center(side) - width // 2
+        charge = self._charges[side]
+        charge.text = charge_text
+        charge.color = color
+        charge.anchored_position = (left + (len(remote_text) + 1) * GLYPH_WIDTH, 5)
+        self._remote_labels[side].anchored_position = (left, 5)
 
 class ServeSelectDisplay:
     """Asks who serves first, with serve bars around the chosen player's name.

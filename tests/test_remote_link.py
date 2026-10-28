@@ -17,7 +17,15 @@ TIMEOUT_MS = 500
 class ProtocolTest(unittest.TestCase):
 
     def test_round_trip(self):
-        self.assertEqual(decode(encode(2, 0xBEEF, 7, True)), (2, 0xBEEF, 7, True))
+        self.assertEqual(decode(encode(2, 0xBEEF, 7, True, 87)), (2, 0xBEEF, 7, True, 87))
+
+    def test_unknown_battery(self):
+        self.assertIsNone(decode(encode(1, 1, 1, False))[4])
+
+    def test_battery_is_rounded_and_clamped(self):
+        self.assertEqual(decode(encode(1, 1, 1, False, 42.6))[4], 43)
+        self.assertEqual(decode(encode(1, 1, 1, False, 101.5))[4], 100)
+        self.assertEqual(decode(encode(1, 1, 1, False, -1))[4], 0)
 
     def test_rejects_foreign_messages(self):
         message = bytearray(encode(1, 1, 1, False))
@@ -54,7 +62,7 @@ class ButtonStateSenderTest(unittest.TestCase):
         self.assertFalse(self.sender.idle)
         sent = self.messages(1000, 1250)
         self.assertEqual([now for now, _ in sent], [1000, 1020, 1040, 1140, 1240])
-        self.assertTrue(all(message == (1, 5, 1, True) for _, message in sent))
+        self.assertTrue(all(message == (1, 5, 1, True, None) for _, message in sent))
 
     def test_release_is_repeated_then_goes_quiet(self):
         self.sender.set_pressed(True, 0)
@@ -62,12 +70,20 @@ class ButtonStateSenderTest(unittest.TestCase):
         self.sender.set_pressed(False, 50)
         sent = self.messages(50, 500)
         self.assertEqual([now for now, _ in sent], [50, 70, 90])
-        self.assertEqual(sent[0][1], (1, 5, 2, False))
+        self.assertEqual(sent[0][1], (1, 5, 2, False, None))
         self.assertTrue(self.sender.idle)
 
     def test_unchanged_state_is_ignored(self):
         self.sender.set_pressed(False, 0)
         self.assertEqual(self.messages(0, 100), [])
+
+    def test_announce_repeats_state_with_battery(self):
+        self.sender.battery = 64
+        self.sender.announce(0)
+        sent = self.messages(0, 500)
+        self.assertEqual([now for now, _ in sent], [0, 20, 40])
+        self.assertTrue(all(message == (1, 5, 0, False, 64) for _, message in sent))
+        self.assertTrue(self.sender.idle)
 
 
 class RemoteButtonTrackerTest(unittest.TestCase):
@@ -141,6 +157,32 @@ class RemoteButtonsTest(unittest.TestCase):
         self.assertEqual(buttons.receive(encode(2, 9, 1, True), 0), [(2, PRESSED)])
         self.assertEqual(buttons.receive(encode(1, 9, 1, True), 0), [(1, PRESSED)])
         self.assertEqual(buttons.check_timeouts(TIMEOUT_MS + 1), [(1, LOST), (2, LOST)])
+
+    def test_battery_is_tracked_by_side(self):
+        buttons = RemoteButtons(TIMEOUT_MS)
+        self.assertIsNone(buttons.battery(1))
+        buttons.receive(encode(1, 9, 0, False, 55), 0)
+        buttons.receive(encode(2, 9, 0, False, 12), 0)
+        self.assertEqual((buttons.battery(1), buttons.battery(2)), (55, 12))
+
+    def test_unknown_battery_keeps_last_reading(self):
+        buttons = RemoteButtons(TIMEOUT_MS)
+        buttons.receive(encode(1, 9, 0, False, 55), 0)
+        buttons.receive(encode(1, 9, 1, True), 10)
+        self.assertEqual(buttons.battery(1), 55)
+
+    def test_announce_is_not_a_press(self):
+        sender = ButtonStateSender(side=1, session=3)
+        sender.battery = 80
+        buttons = RemoteButtons(TIMEOUT_MS)
+        sender.announce(0)
+        events = []
+        for now in range(0, 200):
+            message = sender.message_due(now)
+            if message is not None:
+                events += buttons.receive(message, now)
+        self.assertEqual(events, [])
+        self.assertEqual(buttons.battery(1), 80)
 
     def test_ignores_foreign_messages(self):
         self.assertEqual(RemoteButtons(TIMEOUT_MS).receive(b"other", 0), [])

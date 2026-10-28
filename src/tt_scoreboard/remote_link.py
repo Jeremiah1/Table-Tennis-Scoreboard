@@ -6,17 +6,22 @@ and is sent several times in case a packet is lost; while the button is down
 the state is also repeated as a heartbeat. The scoreboard turns those messages
 back into press and release events, using the counter to fill in changes whose
 packets were all lost, and cancels a press whose heartbeats stop.
+
+Every message also carries the remote's battery charge, so the scoreboard can
+show it.
 """
 import struct
 
 from tt_scoreboard.gestures import ticks_add, ticks_diff
 
 _MAGIC = 0x5454  # "TT"
-_VERSION = 1
-# magic, version, side (1 = left, 2 = right), session, counter, pressed
-_FORMAT = ">HBBHHB"
+_VERSION = 2
+# magic, version, side (1 = left, 2 = right), session, counter, pressed, battery
+_FORMAT = ">HBBHHBB"
 _SIZE = struct.calcsize(_FORMAT)
 _COUNTER_MASK = 0xFFFF
+# Battery byte when the remote has no fuel gauge reading.
+_NO_BATTERY = 0xFF
 
 PRESSED = "pressed"
 RELEASED = "released"
@@ -24,20 +29,25 @@ RELEASED = "released"
 LOST = "lost"
 
 
-def encode(side, session, counter, pressed):
+def encode(side, session, counter, pressed, battery=None):
+    """battery is the charge in percent (0 to 100), or None if unknown."""
+    battery = _NO_BATTERY if battery is None else max(0, min(100, round(battery)))
     return struct.pack(
-        _FORMAT, _MAGIC, _VERSION, side, session, counter, 1 if pressed else 0
+        _FORMAT, _MAGIC, _VERSION, side, session, counter, 1 if pressed else 0, battery
     )
 
 
 def decode(message):
-    """Return (side, session, counter, pressed), or None if not a valid message."""
+    """Return (side, session, counter, pressed, battery), or None if not a valid message.
+
+    battery is the charge in percent, or None if the remote doesn't know it.
+    """
     if len(message) != _SIZE:
         return None
-    magic, version, side, session, counter, pressed = struct.unpack(_FORMAT, message)
+    magic, version, side, session, counter, pressed, battery = struct.unpack(_FORMAT, message)
     if magic != _MAGIC or version != _VERSION or side not in (1, 2):
         return None
-    return side, session, counter, bool(pressed)
+    return side, session, counter, bool(pressed), None if battery > 100 else battery
 
 
 class ButtonStateSender:
@@ -55,6 +65,8 @@ class ButtonStateSender:
         self._pressed = False
         self._repeats_left = 0
         self._next_at = 0
+        # Charge in percent, or None; sent with every message.
+        self.battery = None
 
     @property
     def pressed(self):
@@ -73,6 +85,14 @@ class ButtonStateSender:
         self._repeats_left = self._repeat_count
         self._next_at = now
 
+    def announce(self, now):
+        """Send the current state (and battery) without a change, e.g. on wake.
+
+        The scoreboard adopts it silently, so it never counts as a press.
+        """
+        self._repeats_left = self._repeat_count
+        self._next_at = now
+
     def message_due(self, now):
         """Return the message to send now, or None."""
         if ticks_diff(now, self._next_at) < 0:
@@ -83,7 +103,7 @@ class ButtonStateSender:
             return None
         interval = self._repeat_ms if self._repeats_left > 0 else self._heartbeat_ms
         self._next_at = ticks_add(now, interval)
-        return encode(self._side, self._session, self._counter, self._pressed)
+        return encode(self._side, self._session, self._counter, self._pressed, self.battery)
 
 
 class RemoteButtonTracker:
@@ -143,13 +163,20 @@ class RemoteButtons:
 
     def __init__(self, timeout_ms):
         self._trackers = (RemoteButtonTracker(timeout_ms), RemoteButtonTracker(timeout_ms))
+        self._batteries = [None, None]
+
+    def battery(self, side):
+        """The side's last reported charge in percent, or None if never reported."""
+        return self._batteries[side - 1]
 
     def receive(self, message, now):
         """Return (side, event) pairs for one received message."""
         decoded = decode(message)
         if decoded is None:
             return []
-        side, session, counter, pressed = decoded
+        side, session, counter, pressed, battery = decoded
+        if battery is not None:
+            self._batteries[side - 1] = battery
         events = self._trackers[side - 1].update(session, counter, pressed, now)
         return [(side, event) for event in events]
 

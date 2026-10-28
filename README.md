@@ -5,7 +5,9 @@ A 128x64 RGB LED matrix scoreboard with a wireless arcade-button remote mounted 
 | Part | Hardware |
 | --- | --- |
 | Scoreboard | Adafruit Matrix Portal S3 + 128x64 RGB LED Matrix Panel |
-| Remotes (x2) | Adafruit QT Py ESP32-S3, Terminal Block BFF, Large Arcade Button, 0.187" quick-connect wires, LiPo battery |
+| Remotes (x2) | Adafruit QT Py ESP32-S3, Terminal Block BFF, Large Arcade Button, 0.187" quick-connect wires, LiPo battery, MAX17048 Fuel Gauge (5580) with a STEMMA QT cable (4399 or 4210) and a JST-PH 2-pin jumper (4714) |
+
+This panel has its red and blue data lines swapped, so the scoreboard sets the matrix's color order to `BGR` (`MATRIX_COLOR_ORDER` in `src/tt_scoreboard/app.py`). If colors look wrong on a replacement panel (red shows as blue, for example), try `"RGB"` or another order.
 
 Firmware: CircuitPython 10.3.1 on every board
 
@@ -49,13 +51,20 @@ Connect the arcade button's **switch** terminals (the two on the switch body, no
 
 The pin uses the internal pull-up, so no resistor is needed. The button's LED is not used.
 
-Plug the LiPo into the Terminal Block BFF's JST-PH battery connector. The BFF charges it whenever the QT Py is on USB: its orange CHG LED is lit while charging and the green DONE LED when the battery is full.
+The battery runs through the MAX17048 fuel gauge, which measures its charge:
+
+- the LiPo into either of the gauge's two JST-PH ports
+- the JST-PH 2-pin jumper from the gauge's other JST-PH port to the Terminal Block BFF's battery connector
+- the STEMMA QT cable from the gauge to the QT Py's STEMMA QT port (a 50 mm cable is enough when the gauge sits next to the QT Py)
+
+The BFF charges the battery whenever the QT Py is on USB: its orange CHG LED is lit while charging and the green DONE LED when the battery is full. The gauge is powered by the battery itself, so it keeps tracking the charge while the QT Py sleeps. The remote works without the gauge; it just reports no charge.
 
 ### Behavior
 
 - A remote belongs to an end of the table, not to a player, so it can stay mounted while players change ends. A press scores for whoever is at that end.
 - On power-up or wake, the QT Py's NeoPixel blinks **blue once for the left side, twice for the right**. Ten fast **red** blinks mean `TT_SIDE` is missing; redeploy with `--side`.
 - Each press is broadcast over **ESP-NOW** (no Wi-Fi network needed) and behaves exactly like that side's onboard button: tap, double-tap and hold all work.
+- On power-up or wake, and with every press, the remote reports its battery charge (read every minute while awake).
 - After 10 minutes without a press the remote goes into deep sleep. **The next press only wakes it** (watch for the blue blink); it is not sent to the scoreboard. On USB, CircuitPython only simulates deep sleep, unless the remote woke from a real deep sleep: then it sleeps for real and drops off USB until the next press.
 
 ### Battery life
@@ -64,6 +73,8 @@ The Wi-Fi radio is the biggest drain, so it is only on while the remote is sendi
 
 ### Radio notes
 
+The scoreboard and the remotes must run the same version of the wireless protocol (`_VERSION` in `remote_link.py`): after updating it, deploy the scoreboard and both remotes, or the scoreboard ignores the remotes.
+
 ESP-NOW requires the scoreboard and remotes to be on the same Wi-Fi channel. Neither joins a Wi-Fi network, so they stay on the default channel. Don't set up Wi-Fi (`CIRCUITPY_WIFI_SSID`) on the scoreboard, or it moves to the router's channel and stops hearing the remotes.
 
 Set `REMOTES_ENABLED = False` in `src/tt_scoreboard/app.py` to turn off the radio on the scoreboard.
@@ -71,6 +82,8 @@ Set `REMOTES_ENABLED = False` in `src/tt_scoreboard/app.py` to turn off the radi
 ## Usage
 
 The onboard UP and DOWN buttons on the Matrix Portal always work too: UP is the left side and DOWN is the right side.
+
+On the name screen the headers show each remote by its button color, `BLUE` for the left end and `RED` for the right, with its battery charge, such as `BLUE 87%` and `RED 18%`. The charge is green from 50%, yellow from 20% and red below. `BLUE --` means that remote hasn't reported since the scoreboard started; press its button once. Change `REMOTE_NAMES` and `REMOTE_COLORS` in `screens.py` if the buttons are swapped. With `REMOTES_ENABLED = False` the headers read `PLAYER 1` and `PLAYER 2`.
 
 1. **Name selection**: the left button picks player 1 (who starts at the left end) and the right button player 2. Tap for the next name, double-tap for the previous name, and hold for 1 second to lock in a name (hold again to unlock). Names are listed most recently played first, and after a match both cursors start on the players who just played, each at the end they finished at. Resting on a name for a second replaces `HOLD=LOCK` with that player's rank, record and win rate (shortened to fit). A name locked by one player is skipped for the other, except `GUEST`, which both players can pick; two guests appear as `GUEST 1` and `GUEST 2`. The last entry, `STATS` (in purple), is a menu item: hold on it to browse the stats. See [Player names](#player-names) to change the list.
 2. **Serve**: tap your button to serve first; the serve bars appear around your name. Either player can tap to change it. Once someone is chosen, hold either button for 1 second to start the match.

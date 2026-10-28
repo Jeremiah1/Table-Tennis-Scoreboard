@@ -4,9 +4,13 @@ The arcade button's switch is wired between BUTTON_PIN and GND on the
 Terminal Block BFF. The remote is mounted at one end of the table, and which
 end comes from TT_SIDE ("left" or "right") in the board's settings.toml,
 written by deploy.sh. A press scores for whichever player is at that end.
+
+An optional MAX17048 fuel gauge on the STEMMA QT port reports the battery
+charge, which is sent with every message for the scoreboard to show.
 """
 import alarm
 import board
+import busio
 import digitalio
 import espnow
 import keypad
@@ -31,6 +35,12 @@ CPU_FREQUENCY_HZ = 80_000_000
 # send. Restarting it takes about 4 ms, too little to notice. After the last
 # send it stays on briefly so the packet goes out before the radio stops.
 RADIO_OFF_DELAY_MS = 100
+# The charge changes slowly, so the fuel gauge is read on wake and then this often.
+BATTERY_READ_MS = 60 * 1000
+
+# MAX17048 I2C address, and its state-of-charge register (percent, in 1/256 steps).
+GAUGE_ADDRESS = 0x36
+GAUGE_SOC_REGISTER = 0x04
 
 BROADCAST_MAC = b"\xff\xff\xff\xff\xff\xff"
 # NeoPixel colors (GRB byte order).
@@ -61,6 +71,38 @@ def blink(color, count, on_s=0.15, off_s=0.15):
             time.sleep(off_s)
         power.value = False
 
+class FuelGauge:
+    """MAX17048 fuel gauge on the STEMMA QT port, read directly so the remote
+    needs no libraries. Without one, percent() returns None.
+    """
+
+    def __init__(self):
+        try:
+            self._i2c = busio.I2C(board.SCL1, board.SDA1)
+        except RuntimeError:
+            # No pull-ups on the bus: no gauge plugged in.
+            self._i2c = None
+        self._buffer = bytearray(2)
+
+    def percent(self):
+        """The battery charge in percent, or None if it can't be read."""
+        if self._i2c is None:
+            return None
+        while not self._i2c.try_lock():
+            pass
+        try:
+            self._i2c.writeto_then_readfrom(GAUGE_ADDRESS, bytes((GAUGE_SOC_REGISTER,)), self._buffer)
+        except OSError as error:
+            print("Fuel gauge read failed:", error)
+            return None
+        finally:
+            self._i2c.unlock()
+        return self._buffer[0] + self._buffer[1] / 256
+
+    def deinit(self):
+        if self._i2c is not None:
+            self._i2c.deinit()
+
 def deep_sleep_until_pressed():
     # On USB, CircuitPython only simulates deep sleep, unless the board woke
     # from a real deep sleep: then it sleeps for real and drops off USB.
@@ -76,11 +118,18 @@ def run(side):
     sender = ButtonStateSender(side, session=int.from_bytes(os.urandom(2), "big"))
     keys = keypad.Keys((BUTTON_PIN,), value_when_pressed=False, pull=True, interval=0.02)
     event = keypad.Event()
+    gauge = FuelGauge()
     wifi.radio.enabled = False
-    last_activity = last_sent = supervisor.ticks_ms()
+    last_activity = last_sent = last_battery_read = supervisor.ticks_ms()
+    # Report the charge on wake, before the first press.
+    sender.battery = gauge.percent()
+    sender.announce(last_activity)
     try:
         while True:
             now = supervisor.ticks_ms()
+            if ticks_diff(now, last_battery_read) >= BATTERY_READ_MS:
+                sender.battery = gauge.percent()
+                last_battery_read = now
             while keys.events.get_into(event):
                 sender.set_pressed(event.pressed, now)
                 last_activity = now
@@ -100,6 +149,7 @@ def run(side):
                 return
             time.sleep(LOOP_DELAY_S)
     finally:
+        gauge.deinit()
         keys.deinit()
         radio.deinit()
 
