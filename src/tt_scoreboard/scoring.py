@@ -3,6 +3,12 @@ RIGHT = 2
 # In the deciding game, players change ends when one of them reaches this score.
 DECIDING_GAME_SWITCH_POINTS = 5
 
+def games_to_win(best_of):
+    """Games a player needs to win a best-of match: 3 for best of 5, 4 for best of 7."""
+    if best_of < 1 or best_of % 2 == 0:
+        raise ValueError("Best of must be a positive odd number")
+    return best_of // 2 + 1
+
 class TableTennisMatch:
 
     def __init__(self, first_server=1, games_to_win=4):

@@ -10,7 +10,7 @@ from adafruit_matrixportal.matrix import Matrix
 from tt_scoreboard.gestures import DOUBLE_TAP, HOLD, TAP, GestureDetector, ticks_diff
 from tt_scoreboard.name_selection import NameSelection, distinct_names, parse_player_names
 from tt_scoreboard.remote_link import PRESSED, RELEASED, RemoteButtons
-from tt_scoreboard.scoring import TableTennisMatch
+from tt_scoreboard.scoring import TableTennisMatch, games_to_win
 from tt_scoreboard.screens import (
     HALF_CHARS,
     HEIGHT,
@@ -40,7 +40,10 @@ GUEST_NAME = "GUEST"
 # Menu entry at the end of the name list (a double tap from the start reaches
 # it); hold on it to browse the stats.
 STATS_ENTRY = "STATS"
-GAMES_TO_WIN = 4  # Best of 7
+# Match lengths offered on the serve screen (double tap to change), and the
+# one the board starts with. The last choice is kept until the board restarts.
+BEST_OF_CHOICES = (7, 5)
+DEFAULT_BEST_OF = 7
 
 HOLD_MS = 1000
 # Single taps wait this long for a possible second tap, while double taps are enabled.
@@ -253,37 +256,46 @@ def select_players(display, buttons, stats, start_names=None):
     time.sleep(READY_PAUSE_S)
     return selection.selected_names
 
-def select_server(display, buttons, player_names):
+def select_server(display, buttons, player_names, best_of):
     """Tap your button to serve first, then hold either button to start.
 
-    Returns the player who serves first.
+    A double tap on either button switches to the next of BEST_OF_CHOICES.
+    Returns the player who serves first and the chosen best of.
     """
     screen = ServeSelectDisplay(display, player_names)
     server = None
-    screen.render(server)
-    buttons.clear()
+    screen.render(server, best_of)
+    buttons.clear(double_tap=True)
     while True:
         event = buttons.next_gesture()
         if event is not None:
             side, gesture = event
             if gesture == HOLD:
                 if server is not None:
-                    return server
+                    return server, best_of
+            elif gesture == DOUBLE_TAP:
+                index = BEST_OF_CHOICES.index(best_of)
+                best_of = BEST_OF_CHOICES[(index + 1) % len(BEST_OF_CHOICES)]
+                screen.render(server, best_of)
             else:
                 # Player 1 starts on the left, so the side is the player.
                 server = side
-                screen.render(server)
+                screen.render(server, best_of)
         time.sleep(LOOP_DELAY_S)
 
 def play_match(display, buttons, player_names, match):
     """Play until the match has a winner.
 
     A press awards a point to the player at that end of the table, and a
-    double tap on either button undoes the last point.
+    double tap on either button undoes the last point. Whenever the players
+    need to change ends, the board asks them to before showing the swapped
+    scoreboard.
     """
     scoreboard = ScoreboardDisplay(display, player_names)
     scoreboard.render(match)
     buttons.clear(double_tap=True)
+    # The player the board last showed at the left end, where they should be standing.
+    shown_left = match.left_player
     while match.winner is None:
         event = buttons.next_gesture()
         if event is not None:
@@ -293,7 +305,35 @@ def play_match(display, buttons, player_names, match):
                     match.undo_last_point()
             else:
                 match.award_point(match.player_on_side(side))
+            # The winning point needs no switch: the winner screen comes next.
+            # An undo on the message can make another switch necessary, so check again.
+            while match.winner is None and match.left_player != shown_left:
+                if announce_switch(display, buttons, match):
+                    shown_left = match.left_player
+                scoreboard.show()
+                buttons.clear(double_tap=True)
             scoreboard.render(match)
+        time.sleep(LOOP_DELAY_S)
+
+def announce_switch(display, buttons, match):
+    """Ask the players to change ends until either button is tapped.
+
+    Returns True once a tap confirms it. A double tap undoes the last point
+    instead (such as a game point awarded by mistake) and returns False.
+    Holds, and double taps with nothing to undo, are ignored.
+    """
+    MessageDisplay(display, ("SWITCH", "SIDES"), hint="TAP=OK  2TAP=UNDO", color=WINNER_COLOR)
+    # A press already under way when the message appears doesn't dismiss it.
+    buttons.clear(double_tap=True)
+    while True:
+        event = buttons.next_gesture()
+        if event is not None:
+            _, gesture = event
+            if gesture == TAP:
+                return True
+            if gesture == DOUBLE_TAP and match.can_undo:
+                match.undo_last_point()
+                return False
         time.sleep(LOOP_DELAY_S)
 
 def announce_winner(display, buttons, player_names, match):
@@ -425,12 +465,13 @@ def main():
     remotes = RemoteReceiver(REMOTE_TIMEOUT_MS) if REMOTES_ENABLED else None
     buttons = ButtonInput(hold_ms=HOLD_MS, double_tap_ms=DOUBLE_TAP_MS, remotes=remotes)
     start_names = None
+    best_of = DEFAULT_BEST_OF
     try:
         while True:
             selected = select_players(matrix.display, buttons, stats, start_names)
             player_names = distinct_names(selected)
-            first_server = select_server(matrix.display, buttons, player_names)
-            match = TableTennisMatch(first_server=first_server, games_to_win=GAMES_TO_WIN)
+            first_server, best_of = select_server(matrix.display, buttons, player_names, best_of)
+            match = TableTennisMatch(first_server=first_server, games_to_win=games_to_win(best_of))
             while True:
                 play_match(matrix.display, buttons, player_names, match)
                 if not announce_winner(matrix.display, buttons, player_names, match):

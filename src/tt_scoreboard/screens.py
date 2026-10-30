@@ -158,7 +158,13 @@ class ScoreboardDisplay:
             root.append(score)
             root.append(games)
 
+        self._display = display
+        self._root = root
         display.root_group = root
+
+    def show(self):
+        """Put the scoreboard back on the display after another screen."""
+        self._display.root_group = self._root
 
     def render(self, match):
         for side in range(2):
@@ -251,7 +257,8 @@ class NameSelectDisplay:
         self._remote_labels[side].anchored_position = (left, 5)
 
 class ServeSelectDisplay:
-    """Asks who serves first, with serve bars around the chosen player's name.
+    """Asks who serves first, with serve bars around the chosen player's name,
+    and shows the match length (such as BEST OF 7) across the bottom of the body.
 
     Player 1 is on the left, as at the start of the match.
     """
@@ -259,7 +266,14 @@ class ServeSelectDisplay:
     def __init__(self, display, player_names):
         if len(player_names) != 2:
             raise ValueError("Exactly two player names are required")
-        root = split_layout()
+        # As split_layout, but the divider stops short of the match length line.
+        root = displayio.Group()
+        root.append(rect(HALF-1, 0, 2, 38, LINE_COLOR))
+        root.append(rect(HALF-1, 51, 2, HEIGHT - 51, LINE_COLOR))
+        root.append(rect(0,11,WIDTH,1,LINE_COLOR))
+        root.append(rect(0,51,WIDTH,1,LINE_COLOR))
+        self._best_of = text(" ", GAME_COLOR, HALF, 44)
+        root.append(self._best_of)
         self._markers = []
         self._serve_labels = []
         self._hints = []
@@ -272,7 +286,7 @@ class ServeSelectDisplay:
             markers.append(rect(right_bar, 1, SERVE_BAR_WIDTH, 9, SERVE_COLOR))
             self._markers.append(markers)
             root.append(markers)
-            serve_label = text("SERVE", SERVE_COLOR, center, 31, scale=2)
+            serve_label = text("SERVE", SERVE_COLOR, center, 25, scale=2)
             hint = text(" ", HINT_COLOR, center, 57)
             self._serve_labels.append(serve_label)
             self._hints.append(hint)
@@ -280,8 +294,9 @@ class ServeSelectDisplay:
             root.append(hint)
         display.root_group = root
 
-    def render(self, server):
+    def render(self, server, best_of):
         """server is the chosen player (1 or 2), or None before anyone is chosen."""
+        self._best_of.text = "BEST OF {}".format(best_of)
         for index in range(2):
             chosen = index + 1 == server
             self._markers[index].hidden = not chosen

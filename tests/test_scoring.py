@@ -1,6 +1,6 @@
 import unittest
 
-from tt_scoreboard.scoring import LEFT, RIGHT, TableTennisMatch
+from tt_scoreboard.scoring import LEFT, RIGHT, TableTennisMatch, games_to_win
 
 
 def win_game(match, player):
@@ -39,6 +39,28 @@ class MatchWinnerTest(unittest.TestCase):
     def test_games_to_win_must_be_positive(self):
         with self.assertRaises(ValueError):
             TableTennisMatch(games_to_win=0)
+
+    def test_best_of_five_is_first_to_three_games(self):
+        match = TableTennisMatch(games_to_win=games_to_win(5))
+        for _ in range(2):
+            win_game(match, 1)
+            win_game(match, 2)
+        self.assertIsNone(match.winner)
+        win_game(match, 1)
+        self.assertEqual(match.winner, 1)
+        self.assertEqual(match.games, (3, 2))
+
+
+class GamesToWinTest(unittest.TestCase):
+
+    def test_best_of_choices(self):
+        self.assertEqual(games_to_win(5), 3)
+        self.assertEqual(games_to_win(7), 4)
+
+    def test_rejects_even_or_nonpositive_best_of(self):
+        for best_of in (0, -1, 4, 6):
+            with self.assertRaises(ValueError):
+                games_to_win(best_of)
 
 
 class UndoTest(unittest.TestCase):
@@ -119,6 +141,35 @@ class SidesTest(unittest.TestCase):
             match.undo_last_point()
         self.assertEqual(match.points, (0, 0))
         self.assertEqual(match.player_on_side(LEFT), 1)
+
+    def test_best_of_five_deciding_game_switches_at_five_points(self):
+        match = TableTennisMatch(games_to_win=games_to_win(5))
+        for _ in range(2):
+            win_game(match, 1)
+            win_game(match, 2)
+        self.assertEqual(match.games, (2, 2))
+        self.assertTrue(match.deciding_game)
+        self.assertEqual(match.player_on_side(LEFT), 1)
+        for _ in range(4):
+            match.award_point(1)
+        self.assertEqual(match.player_on_side(LEFT), 1)
+        match.award_point(1)
+        self.assertEqual(match.player_on_side(LEFT), 2)
+        # Finished match keeps the switched ends.
+        win_game(match, 1)
+        self.assertEqual(match.winner, 1)
+        self.assertEqual(match.player_on_side(LEFT), 2)
+
+    def test_best_of_five_has_no_mid_game_switch_at_two_one(self):
+        match = TableTennisMatch(games_to_win=games_to_win(5))
+        win_game(match, 1)
+        win_game(match, 2)
+        win_game(match, 1)
+        self.assertFalse(match.deciding_game)
+        left = match.player_on_side(LEFT)
+        for _ in range(5):
+            match.award_point(1)
+        self.assertEqual(match.player_on_side(LEFT), left)
 
     def test_no_mid_game_switch_outside_deciding_game(self):
         match = TableTennisMatch()
