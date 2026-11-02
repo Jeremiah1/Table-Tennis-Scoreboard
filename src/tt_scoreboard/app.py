@@ -7,6 +7,7 @@ import supervisor  # pyright: ignore[reportMissingModuleSource]  (CircuitPython 
 import time
 import wifi
 from adafruit_matrixportal.matrix import Matrix
+from tt_scoreboard.crash_log import SIZE as CRASH_LOG_SIZE, CrashLog
 from tt_scoreboard.gestures import DOUBLE_TAP, HOLD, TAP, GestureDetector, ticks_diff
 from tt_scoreboard.name_selection import NameSelection, distinct_names, parse_player_names
 from tt_scoreboard.remote_link import PRESSED, RELEASED, RemoteButtons
@@ -15,6 +16,7 @@ from tt_scoreboard.screens import (
     HALF_CHARS,
     HEIGHT,
     LEADERBOARD_ROWS,
+    ERROR_COLOR,
     WIDTH,
     WINNER_COLOR,
     LeaderboardDisplay,
@@ -71,6 +73,10 @@ MATRIX_COLOR_ORDER = "BGR"
 REMOTES_ENABLED = True
 # A held remote button is forgotten if its heartbeats stop for this long.
 REMOTE_TIMEOUT_MS = 500
+# After a crash the board shows ERROR this long, then restarts, unless it had
+# run for less than CRASH_RESTART_MIN_UPTIME_S. The report is saved either way.
+CRASH_MESSAGE_S = 5
+CRASH_RESTART_MIN_UPTIME_S = 60
 
 class RemoteReceiver:
     """Receives the wireless button remotes at each end of the table over ESP-NOW."""
@@ -462,30 +468,71 @@ def show_match_stats(display, buttons, stats, player_names, winner):
     if pages:
         show_stats(display, buttons, stats, pages)
 
-def main():
-    validate_player_names(
-        PLAYER_NAMES + (GUEST_NAME, STATS_ENTRY) + distinct_names((GUEST_NAME, GUEST_NAME))
-    )
-    stats = StatsBook(PLAYER_NAMES, NvmStore(microcontroller.nvm))
-    matrix = Matrix(width=WIDTH, height=HEIGHT, bit_depth=2, color_order=MATRIX_COLOR_ORDER)
+def crash_report(error, uptime_s):
+    """The text saved in the crash log: how long the board had run, and the traceback."""
+    try:
+        import traceback
+        details = "".join(traceback.format_exception(error))
+    except ImportError:
+        details = repr(error)
+    return "Crashed after {} min\n{}".format(int(uptime_s // 60), details)
+
+def run(display, stats):
     remotes = RemoteReceiver(REMOTE_TIMEOUT_MS) if REMOTES_ENABLED else None
     buttons = ButtonInput(hold_ms=HOLD_MS, double_tap_ms=DOUBLE_TAP_MS, remotes=remotes)
     start_names = None
     best_of = DEFAULT_BEST_OF
     try:
         while True:
-            selected = select_players(matrix.display, buttons, stats, start_names)
+            selected = select_players(display, buttons, stats, start_names)
             player_names = distinct_names(selected)
-            first_server, best_of = select_server(matrix.display, buttons, player_names, best_of)
+            first_server, best_of = select_server(display, buttons, player_names, best_of)
             match = TableTennisMatch(first_server=first_server, games_to_win=games_to_win(best_of))
             while True:
-                play_match(matrix.display, buttons, player_names, match)
-                if not announce_winner(matrix.display, buttons, player_names, match):
+                play_match(display, buttons, player_names, match)
+                if not announce_winner(display, buttons, player_names, match):
                     break
             stats.record_match(player_names, match.games, match.winner)
             # Start the next name selection with each player at the end they finished at.
             left = match.left_player
             start_names = (selected[left - 1], selected[2 - left])
-            show_match_stats(matrix.display, buttons, stats, player_names, match.winner)
+            show_match_stats(display, buttons, stats, player_names, match.winner)
     finally:
         buttons.deinit()
+
+def main():
+    """Run the scoreboard, saving a report of any crash and then restarting.
+
+    A crash within CRASH_RESTART_MIN_UPTIME_S of starting is saved but stops
+    the board as before (red status light), so a crash on every start doesn't
+    restart it over and over.
+    """
+    started = time.monotonic()
+    nvm = microcontroller.nvm
+    crash_log = CrashLog(nvm)
+    saved = crash_log.load()
+    if saved is not None:
+        print("Last crash (saved in non-volatile memory):\n" + saved)
+    display = None
+    try:
+        validate_player_names(
+            PLAYER_NAMES + (GUEST_NAME, STATS_ENTRY) + distinct_names((GUEST_NAME, GUEST_NAME))
+        )
+        stats = StatsBook(PLAYER_NAMES, NvmStore(nvm, size=len(nvm) - CRASH_LOG_SIZE))
+        matrix = Matrix(width=WIDTH, height=HEIGHT, bit_depth=2, color_order=MATRIX_COLOR_ORDER)
+        display = matrix.display
+        run(display, stats)
+    except Exception as error:
+        uptime = time.monotonic() - started
+        try:
+            crash_log.save(crash_report(error, uptime))
+        except Exception as log_error:
+            print("Could not save the crash report:", repr(log_error))
+        if uptime < CRASH_RESTART_MIN_UPTIME_S:
+            raise
+        try:
+            MessageDisplay(display, ("ERROR",), hint="RESTARTING", color=ERROR_COLOR)
+        except Exception:
+            pass  # The display may be what failed.
+        time.sleep(CRASH_MESSAGE_S)
+        microcontroller.reset()

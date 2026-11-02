@@ -12,6 +12,7 @@ GAME_COLOR = 0x00C000
 LOCKED_COLOR = 0x00C000
 HINT_COLOR = 0x606060
 WINNER_COLOR = 0xFFD000
+ERROR_COLOR = 0xFF0000
 # Menu entries in the name list (such as STATS), so they don't read as names.
 MENU_COLOR = 0xC000FF
 # Remote battery charge: at least BATTERY_OK_PERCENT is green, at least

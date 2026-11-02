@@ -76,10 +76,16 @@ class PlayerRecord:
 
 
 class NvmStore:
-    """Saves one blob at the start of a bytearray-like memory (microcontroller.nvm)."""
+    """Saves one blob at the start of a bytearray-like memory (microcontroller.nvm).
 
-    def __init__(self, memory):
+    The end of microcontroller.nvm holds the crash log, so the scoreboard
+    passes a size that stops short of it.
+    """
+
+    def __init__(self, memory, size=None):
+        """size limits the blob to the first size bytes, leaving the rest for other uses."""
         self._memory = memory
+        self._size = len(memory) if size is None else size
 
     def load(self):
         """Return the saved payload, or None if there is none or it is damaged."""
@@ -87,13 +93,13 @@ class NvmStore:
         if header[0:2] != _MAGIC or header[2] != _VERSION:
             return None
         length = int.from_bytes(header[3:5], "big")
-        if _HEADER_SIZE + length > len(self._memory):
+        if _HEADER_SIZE + length > self._size:
             return None
         return bytes(self._memory[_HEADER_SIZE:_HEADER_SIZE + length])
 
     def save(self, payload):
         blob = _MAGIC + bytes((_VERSION,)) + len(payload).to_bytes(2, "big") + payload
-        if len(blob) > len(self._memory):
+        if len(blob) > self._size:
             raise ValueError("Stats do not fit in non-volatile memory")
         self._memory[0:len(blob)] = blob
 

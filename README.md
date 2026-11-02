@@ -107,9 +107,22 @@ Reset: hold both buttons for 5 seconds on any stats screen (two people, or the b
 
 Stats are kept in the board's non-volatile memory, not on the CIRCUITPY drive, so deploying never touches them. They're stored by name: a player removed from `players.txt` is hidden, and their stats return if the name is added back.
 
+## Crashes
+
+If the scoreboard program crashes, it saves a report (how long it had been running and the error's traceback) at the end of the board's non-volatile memory, beside the stats. The report survives the reset button and unplugging, and a new crash replaces it. The board then shows `ERROR` / `RESTARTING` for 5 seconds and restarts by itself; the match in progress is lost, but recorded stats are not.
+
+A crash within a minute of starting (a bad `players.txt` name, for example) is saved too, but the board stops instead of restarting over and over: the matrix goes black and the status light blinks red, as before.
+
+To read the report, plug the scoreboard into a computer and open its serial console (for example `tio /dev/ttyACM0`, or Thonny or the Mu editor). It's printed every time the program starts, after `Last crash (saved in non-volatile memory):`; the console usually connects too late to catch that, so press Ctrl-C and then Ctrl-D to restart the program and see it. Or from the REPL (Ctrl-C):
+
+    import microcontroller
+    from tt_scoreboard.crash_log import CrashLog
+    print(CrashLog(microcontroller.nvm).load())
+    CrashLog(microcontroller.nvm).clear()  # forget it
+
 ## Tests
 
-The logic in `src/tt_scoreboard/` that doesn't touch hardware (`scoring.py`, `name_selection.py`, `gestures.py`, `remote_link.py`, `stats.py`) can be tested on desktop Python:
+The logic in `src/tt_scoreboard/` that doesn't touch hardware (`scoring.py`, `name_selection.py`, `gestures.py`, `remote_link.py`, `stats.py`, `crash_log.py`) can be tested on desktop Python:
 
     python3 -m unittest discover -s tests -t .
 
