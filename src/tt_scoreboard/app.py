@@ -287,28 +287,34 @@ def play_match(display, buttons, player_names, match):
     """Play until the match has a winner.
 
     A press awards a point to the player at that end of the table, and a
-    double tap on either button undoes the last point. Whenever the players
-    need to change ends, the board asks them to before showing the swapped
-    scoreboard.
+    double tap on either button undoes the last point. Players change ends
+    between games by themselves, but the switch in the middle of the deciding
+    game is easy to forget, so the board asks for it before showing the
+    swapped scoreboard.
     """
     scoreboard = ScoreboardDisplay(display, player_names)
     scoreboard.render(match)
     buttons.clear(double_tap=True)
-    # The player the board last showed at the left end, where they should be standing.
+    # The player who should be standing at the left end.
     shown_left = match.left_player
     while match.winner is None:
         event = buttons.next_gesture()
         if event is not None:
             side, gesture = event
+            games = match.games
             if gesture == DOUBLE_TAP:
                 if match.can_undo:
                     match.undo_last_point()
             else:
                 match.award_point(match.player_on_side(side))
+            if match.games != games:
+                # A switch between games (or an undo back across one) needs no message.
+                shown_left = match.left_player
             # The winning point needs no switch: the winner screen comes next.
             # An undo on the message can make another switch necessary, so check again.
             while match.winner is None and match.left_player != shown_left:
-                if announce_switch(display, buttons, match):
+                games = match.games
+                if announce_switch(display, buttons, match) or match.games != games:
                     shown_left = match.left_player
                 scoreboard.show()
                 buttons.clear(double_tap=True)
@@ -319,7 +325,7 @@ def announce_switch(display, buttons, match):
     """Ask the players to change ends until either button is tapped.
 
     Returns True once a tap confirms it. A double tap undoes the last point
-    instead (such as a game point awarded by mistake) and returns False.
+    instead (such as a point awarded by mistake) and returns False.
     Holds, and double taps with nothing to undo, are ignored.
     """
     MessageDisplay(display, ("SWITCH", "SIDES"), hint="TAP=OK  2TAP=UNDO", color=WINNER_COLOR)
